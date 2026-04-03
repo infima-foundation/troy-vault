@@ -1,0 +1,77 @@
+version: "3.9"
+
+networks:
+  troy-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  chroma_data:
+  media_data:
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: troy
+      POSTGRES_PASSWORD: troy
+      POSTGRES_DB: troy_vault
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - troy-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U troy -d troy_vault"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ~/.ollama:/root/.ollama
+    networks:
+      - troy-net
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://troy:troy@postgres:5432/troy_vault
+      CHROMA_PATH: /data/chroma_data
+      MEDIA_PATH: /data/media
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - media_data:/data/media
+      - chroma_data:/data/chroma_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - troy-net
+
+  webapp:
+    build:
+      context: ../webapp
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - troy-net
