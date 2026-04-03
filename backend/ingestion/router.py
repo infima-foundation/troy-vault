@@ -12,19 +12,81 @@ from sqlalchemy.orm import Session
 
 try:
     import magic as _magic
-    def _detect_mime(data: bytes) -> str:
-        return _magic.from_buffer(data, mime=True)
+    _MAGIC_AVAILABLE = True
 except ImportError:
-    import mimetypes
-    def _detect_mime(data: bytes) -> str:  # type: ignore[misc]
-        # Minimal sniffing without libmagic
-        if data[:4] == b'\xff\xd8\xff\xe0' or data[:4] == b'\xff\xd8\xff\xe1':
-            return "image/jpeg"
-        if data[:8] == b'\x89PNG\r\n\x1a\n':
-            return "image/png"
-        if data[:4] in (b'%PDF',):
-            return "application/pdf"
-        return "application/octet-stream"
+    _MAGIC_AVAILABLE = False
+
+
+# ISO Base Media File Format brands → MIME type
+# HEIC/HEIF and video containers share the same ftyp-box structure.
+_ISOBMFF_BRANDS: dict[bytes, str] = {
+    b"heic": "image/heic",
+    b"heix": "image/heic",
+    b"hevc": "image/heic",
+    b"hevx": "image/heic",
+    b"mif1": "image/heif",
+    b"msf1": "image/heif",
+    b"avif": "image/avif",
+    b"avis": "image/avif",
+    b"isom": "video/mp4",
+    b"mp41": "video/mp4",
+    b"mp42": "video/mp4",
+    b"M4V ": "video/mp4",
+    b"M4A ": "audio/mp4",
+    b"M4B ": "audio/mp4",
+    b"qt  ": "video/quicktime",
+    b"avc1": "video/mp4",
+}
+
+
+def _sniff_isobmff(data: bytes) -> str | None:
+    """
+    Return a MIME type if data starts with an ISO Base Media File Format
+    ftyp box, otherwise None.
+    """
+    if len(data) < 12:
+        return None
+    try:
+        box_size = int.from_bytes(data[0:4], "big")
+        if data[4:8] != b"ftyp" or box_size < 8 or box_size > len(data):
+            return None
+        major_brand = data[8:12]
+        if major_brand in _ISOBMFF_BRANDS:
+            return _ISOBMFF_BRANDS[major_brand]
+        # scan compatible brands
+        for i in range(16, box_size, 4):
+            brand = data[i : i + 4]
+            if brand in _ISOBMFF_BRANDS:
+                return _ISOBMFF_BRANDS[brand]
+    except Exception:
+        pass
+    return None
+
+
+def _detect_mime(data: bytes) -> str:
+    """
+    Detect MIME type from raw bytes.
+    1. Check ISO BMFF ftyp box first (catches HEIC/HEIF/MP4/MOV/M4A).
+    2. Delegate to python-magic if available.
+    3. Fall back to minimal byte sniffing.
+    """
+    isobmff = _sniff_isobmff(data)
+    if isobmff:
+        return isobmff
+
+    if _MAGIC_AVAILABLE:
+        return _magic.from_buffer(data, mime=True)  # type: ignore[name-defined]
+
+    # Minimal fallback without libmagic
+    if data[:4] in (b"\xff\xd8\xff\xe0", b"\xff\xd8\xff\xe1", b"\xff\xd8\xff\xe2"):
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"%PDF":
+        return "application/pdf"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
 
 from ingestion import photo_pipeline, document_pipeline
 

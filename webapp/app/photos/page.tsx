@@ -307,16 +307,12 @@ function PhotoModal({ assetId, onClose }: { assetId: string; onClose: () => void
 function DragOverlay({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none">
-      <svg className="w-16 h-16 text-white/40 mb-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
-          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-      </svg>
-      <p className="text-2xl font-semibold text-white/80 tracking-wide">
+    <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/80 pointer-events-none">
+      <p className="text-2xl font-semibold text-white tracking-wide">
         Drop files into your vault
       </p>
-      <p className="text-sm text-white/40 mt-2">
-        Photos, videos, documents, audio
+      <p className="text-sm text-white/50 mt-2">
+        Photos · Videos · Documents · Audio
       </p>
     </div>
   );
@@ -423,7 +419,6 @@ function UploadModal({
     addFiles(e.dataTransfer.files);
   }
 
-  const pendingCount = items.filter((i) => i.status === "pending").length;
   const doneCount = items.filter((i) => i.status === "done").length;
   const errorCount = items.filter((i) => i.status === "error").length;
 
@@ -636,7 +631,10 @@ export default function PhotosPage() {
 
   useEffect(() => { loadAssets(); }, [loadAssets]);
 
-  // ── Global drag listeners (on document.body for reliable detection) ──────────
+  // ── Global drag listeners ─────────────────────────────────────────────────────
+  // Listen on `document` (not body) so we only get one event per move, not one
+  // per DOM child. Use relatedTarget on dragleave — null means the cursor has
+  // actually left the browser window, so we hide the overlay without flicker.
   useEffect(() => {
     const onDragEnter = (e: DragEvent) => {
       if (!e.dataTransfer?.types.includes("Files")) return;
@@ -644,13 +642,15 @@ export default function PhotosPage() {
       setDraggingOver(true);
     };
 
-    const onDragLeave = () => {
-      dragCounterRef.current -= 1;
-      if (dragCounterRef.current === 0) setDraggingOver(false);
+    const onDragLeave = (e: DragEvent) => {
+      // relatedTarget is null only when the cursor leaves the viewport entirely
+      if (e.relatedTarget !== null) return;
+      dragCounterRef.current = 0;
+      setDraggingOver(false);
     };
 
     const onDragOver = (e: DragEvent) => {
-      e.preventDefault(); // allow drop
+      e.preventDefault(); // required to allow drop
     };
 
     const onDrop = (e: DragEvent) => {
@@ -666,15 +666,15 @@ export default function PhotosPage() {
       setShowUploadModal(true);
     };
 
-    document.body.addEventListener("dragenter", onDragEnter);
-    document.body.addEventListener("dragleave", onDragLeave);
-    document.body.addEventListener("dragover", onDragOver);
-    document.body.addEventListener("drop", onDrop);
+    document.addEventListener("dragenter", onDragEnter);
+    document.addEventListener("dragleave", onDragLeave);
+    document.addEventListener("dragover", onDragOver);
+    document.addEventListener("drop", onDrop);
     return () => {
-      document.body.removeEventListener("dragenter", onDragEnter);
-      document.body.removeEventListener("dragleave", onDragLeave);
-      document.body.removeEventListener("dragover", onDragOver);
-      document.body.removeEventListener("drop", onDrop);
+      document.removeEventListener("dragenter", onDragEnter);
+      document.removeEventListener("dragleave", onDragLeave);
+      document.removeEventListener("dragover", onDragOver);
+      document.removeEventListener("drop", onDrop);
     };
   }, []);
 
