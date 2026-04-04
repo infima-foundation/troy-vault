@@ -63,16 +63,56 @@ def _sniff_isobmff(data: bytes) -> str | None:
     return None
 
 
+# Office Open XML content-type prefix → MIME
+# Checked when a ZIP is detected but might be an OOXML container.
+_OOXML_CONTENT_TYPES: dict[bytes, str] = {
+    b"application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    b"application/vnd.openxmlformats-officedocument.presentationml.presentation":
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
+def _sniff_ooxml(data: bytes) -> str | None:
+    """
+    If data is a ZIP that contains [Content_Types].xml, read it and return
+    the appropriate OOXML MIME type, otherwise return None.
+    DOCX/XLSX/PPTX are all ZIP archives; python-magic identifies them as
+    application/zip, so we need this extra step.
+    """
+    if data[:2] != b"PK":  # ZIP local file header signature
+        return None
+    import io, zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            if "[Content_Types].xml" not in zf.namelist():
+                return None
+            ct_xml = zf.read("[Content_Types].xml")
+            for prefix, mime in _OOXML_CONTENT_TYPES.items():
+                if prefix in ct_xml:
+                    return mime
+    except Exception:
+        pass
+    return None
+
+
 def _detect_mime(data: bytes) -> str:
     """
     Detect MIME type from raw bytes.
     1. Check ISO BMFF ftyp box first (catches HEIC/HEIF/MP4/MOV/M4A).
-    2. Delegate to python-magic if available.
-    3. Fall back to minimal byte sniffing.
+    2. Check OOXML (DOCX/XLSX/PPTX live inside a ZIP container).
+    3. Delegate to python-magic if available.
+    4. Fall back to minimal byte sniffing.
     """
     isobmff = _sniff_isobmff(data)
     if isobmff:
         return isobmff
+
+    ooxml = _sniff_ooxml(data)
+    if ooxml:
+        return ooxml
 
     if _MAGIC_AVAILABLE:
         return _magic.from_buffer(data, mime=True)  # type: ignore[name-defined]

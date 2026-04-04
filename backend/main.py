@@ -203,6 +203,7 @@ def _asset_summary(asset: Asset) -> dict:
         "thumbnail_path": asset.thumbnail_path,
         "lat": asset.lat,
         "lon": asset.lon,
+        "metadata_json": asset.metadata_json,
     }
 
 

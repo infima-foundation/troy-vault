@@ -93,6 +93,8 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
     if text:
         _embed_and_store(text, str(dest_path), filename)
 
+    summary = text[:500].strip() if text else ""
+
     asset_id = uuid.uuid4()
     asset = Asset(
         id=asset_id,
@@ -102,7 +104,10 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
         sha256_hash=sha256,
         file_path=str(dest_path),
         size_bytes=len(data),
-        metadata_json={"text_length": len(text) if text else 0},
+        metadata_json={
+            "text_length": len(text) if text else 0,
+            "summary": summary,
+        },
     )
     db.add(asset)
     db.commit()
@@ -142,16 +147,20 @@ def _extract_pdf(data: bytes) -> str:
 
 
 def _extract_docx(data: bytes) -> str:
-    from docx import Document
-
+    try:
+        from docx import Document
+    except ImportError:
+        return ""
     doc = Document(io.BytesIO(data))
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
 def _extract_ocr(data: bytes) -> str:
-    from PIL import Image
-    import pytesseract
-
+    try:
+        from PIL import Image
+        import pytesseract
+    except ImportError:
+        return ""
     img = Image.open(io.BytesIO(data))
     return pytesseract.image_to_string(img)
 
