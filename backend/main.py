@@ -1,4 +1,5 @@
 import os
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -46,6 +47,14 @@ app.add_middleware(
 def get_db():
     with Session(engine) as session:
         yield session
+
+
+def _parse_uuid(asset_id: str) -> _uuid.UUID:
+    """Parse a UUID string and raise 422 if invalid."""
+    try:
+        return _uuid.UUID(asset_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid asset ID: {asset_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +126,7 @@ def list_assets(
 
 @app.get("/api/v1/assets/{asset_id}")
 def get_asset(asset_id: str, db: Session = Depends(get_db)):
-    asset = db.get(Asset, asset_id)
+    asset = db.get(Asset, _parse_uuid(asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return _asset_detail(asset)
@@ -158,12 +167,24 @@ def search_assets(
 
 @app.get("/api/v1/assets/{asset_id}/thumbnail")
 def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
-    asset = db.get(Asset, asset_id)
+    asset = db.get(Asset, _parse_uuid(asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    if not asset.thumbnail_path or not Path(asset.thumbnail_path).exists():
-        raise HTTPException(status_code=404, detail="Thumbnail not available")
-    return FileResponse(asset.thumbnail_path, media_type="image/jpeg")
+
+    # Prefer the pre-generated thumbnail; fall back to the original file.
+    for candidate in [asset.thumbnail_path, asset.file_path]:
+        if candidate and Path(candidate).exists():
+            # Guess a reasonable media type from the extension.
+            suffix = Path(candidate).suffix.lower()
+            media_type = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".png": "image/png", ".webp": "image/webp",
+                ".gif": "image/gif", ".heic": "image/heic",
+                ".heif": "image/heif",
+            }.get(suffix, "application/octet-stream")
+            return FileResponse(candidate, media_type=media_type)
+
+    raise HTTPException(status_code=404, detail="No image file available for this asset")
 
 
 # ---------------------------------------------------------------------------

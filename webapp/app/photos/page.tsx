@@ -91,11 +91,12 @@ function filterAccepted(files: FileList | File[]): File[] {
   );
 }
 
-// XHR-based upload so we get real upload progress events
+// XHR-based upload so we get real upload progress events.
+// Returns the parsed JSON body so callers can log/inspect it.
 function xhrUpload(
   file: File,
   onProgress: (pct: number) => void
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const form = new FormData();
@@ -108,15 +109,14 @@ function xhrUpload(
     });
 
     xhr.addEventListener("load", () => {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* ignore */ }
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
+        console.log("[troy-vault] ingest response:", body);
+        resolve(body);
       } else {
-        try {
-          const body = JSON.parse(xhr.responseText);
-          reject(new Error(body.detail ?? `HTTP ${xhr.status}`));
-        } catch {
-          reject(new Error(`HTTP ${xhr.status}`));
-        }
+        console.error("[troy-vault] ingest error:", xhr.status, body);
+        reject(new Error((body.detail as string) ?? `HTTP ${xhr.status}`));
       }
     });
 
@@ -327,7 +327,7 @@ function UploadModal({
 }: {
   initialFiles: File[];
   onClose: () => void;
-  onComplete: () => void;
+  onComplete: () => Promise<void>;
 }) {
   const [items, setItems] = useState<UploadItem[]>(() =>
     initialFiles.map((f) => ({
@@ -408,7 +408,7 @@ function UploadModal({
     setUploading(false);
     setAllDone(true);
     if (allSucceeded) {
-      onComplete();
+      await onComplete(); // wait for asset list to refresh before closing
       onClose();
     }
   }
@@ -553,7 +553,7 @@ function UploadModal({
           {/* Action */}
           {allDone ? (
             <button
-              onClick={() => { onComplete(); onClose(); }}
+              onClick={async () => { await onComplete(); onClose(); }}
               className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm transition-colors"
             >
               Close
