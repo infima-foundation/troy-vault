@@ -10,6 +10,12 @@ Steps:
   6. Return asset_id (UUID)
 """
 
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 import io
 import os
 import uuid
