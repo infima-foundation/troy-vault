@@ -1,117 +1,339 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const PROFILE_KEY = "troy_profile";
 
-interface AssetSummary {
-  id: string;
-  filename: string;
-  file_type: "photo" | "video" | "audio" | "document";
-  mime_type: string;
-  size_bytes: number;
-  captured_at: string | null;
-  ingested_at: string;
-  thumbnail_path: string | null;
+interface Profile {
+  name: string; occupation: string; about: string; language: string; tone: string;
+}
+interface Message {
+  id: string; role: "user" | "assistant"; content: string; created_at: string;
 }
 
-function greeting(name: string): string {
-  const h = new Date().getHours();
-  const time = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
-  return name ? `Good ${time}, ${name}` : `Good ${time}`;
+function loadProfile(): Profile | null {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || "null"); } catch { return null; }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+function formatTime(s: string): string {
+  return new Date(s).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatDate(s: string | null): string {
-  if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-// ─── Stat card ────────────────────────────────────────────────────────────────
-
-function StatCard({
-  label,
-  value,
-  loading,
-  icon,
-}: {
-  label: string;
-  value: string;
-  loading: boolean;
-  icon: React.ReactNode;
-}) {
+function TroyAvatar() {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3 shadow-sm">
-      <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500">
-        {icon}
-      </div>
-      {loading ? (
-        <div className="space-y-2">
-          <div className="h-7 w-12 bg-gray-100 rounded animate-pulse" />
-          <div className="h-3.5 w-20 bg-gray-50 rounded animate-pulse" />
-        </div>
-      ) : (
-        <div>
-          <p className="text-2xl font-semibold text-gray-900 tabular-nums">{value}</p>
-          <p className="text-sm text-gray-500 mt-0.5">{label}</p>
-        </div>
-      )}
+    <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
+      <span className="text-[10px] font-bold text-white">T</span>
     </div>
   );
 }
 
-// ─── Recent tile ──────────────────────────────────────────────────────────────
+function TypingIndicator() {
+  return (
+    <div className="flex items-end gap-3 mb-5">
+      <TroyAvatar />
+      <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-function RecentTile({ asset }: { asset: AssetSummary }) {
-  const ext = asset.filename.split(".").pop()?.toUpperCase() ?? "";
+function MessageBubble({ msg, streaming = false }: { msg: Message; streaming?: boolean }) {
+  if (msg.role === "user") {
+    return (
+      <div className="flex justify-end mb-5">
+        <div className="max-w-[75%]">
+          <div className="bg-gray-900 text-white rounded-2xl rounded-br-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
+            {msg.content}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-1.5 text-right pr-1">{formatTime(msg.created_at)}</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-end gap-3 mb-5">
+      <TroyAvatar />
+      <div className="max-w-[75%]">
+        <div className="bg-gray-100 text-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
+          {msg.content}
+          {streaming && (
+            <span className="inline-block w-0.5 h-4 bg-gray-500 ml-0.5 align-middle animate-pulse" />
+          )}
+        </div>
+        {!streaming && (
+          <p className="text-[11px] text-gray-400 mt-1.5 pl-1">{formatTime(msg.created_at)}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const SUGGESTED_PROMPTS = [
+  "What photos did I take last summer?",
+  "Summarize my documents",
+  "Find files from last week",
+  "What's in my vault?",
+];
+
+// ─── Inner content ────────────────────────────────────────────────────────────
+
+function HomeContent() {
+  const searchParams = useSearchParams();
+  const convIdParam = searchParams.get("conv");
+
+  const [activeConvId, setActiveConvId] = useState<string | null>(convIdParam);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [streamingMsg, setStreamingMsg] = useState<Message | null>(null);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const hasMessages = messages.length > 0 || !!streamingMsg || sending;
+
+  // Load messages when conv param changes
+  const loadMessages = useCallback(async (id: string) => {
+    setLoadingMessages(true);
+    try {
+      const data = await fetch(`${API_URL}/api/v1/chat/conversations/${id}/messages`).then((r) => r.json());
+      setMessages(data);
+    } catch { setMessages([]); }
+    finally { setLoadingMessages(false); }
+  }, []);
+
+  useEffect(() => {
+    if (convIdParam) {
+      setActiveConvId(convIdParam);
+      loadMessages(convIdParam);
+    } else {
+      setActiveConvId(null);
+      setMessages([]);
+    }
+  }, [convIdParam, loadMessages]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingMsg, sending]);
+
+  async function createConversation(): Promise<string | null> {
+    try {
+      const conv = await fetch(`${API_URL}/api/v1/chat/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }).then((r) => r.json());
+      setActiveConvId(conv.id);
+      // Update URL without navigation
+      window.history.replaceState(null, "", `/?conv=${conv.id}`);
+      return conv.id;
+    } catch { return null; }
+  }
+
+  async function sendMessage(text?: string) {
+    const msgText = (text ?? input).trim();
+    if (!msgText || sending) return;
+    let convId = activeConvId;
+    if (!convId) { convId = await createConversation(); if (!convId) return; }
+
+    const tempMsg: Message = {
+      id: `tmp-${Date.now()}`, role: "user", content: msgText,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, tempMsg]);
+    setInput("");
+    setSending(true);
+    setStreamingMsg(null);
+    if (inputRef.current) { inputRef.current.style.height = "24px"; }
+
+    const streamId = `streaming-${Date.now()}`;
+    try {
+      const response = await fetch(`${API_URL}/api/v1/chat/conversations/${convId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: msgText, profile: loadProfile() }),
+      });
+      if (!response.body) throw new Error("No body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.token !== undefined) {
+              currentContent += event.token;
+              setStreamingMsg({ id: streamId, role: "assistant", content: currentContent, created_at: new Date().toISOString() });
+            }
+            if (event.done && event.id) {
+              setMessages((prev) => [...prev, {
+                id: event.id, role: "assistant",
+                content: event.content, created_at: event.created_at,
+              }]);
+              setStreamingMsg(null);
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    } catch {
+      setMessages((prev) => [...prev, {
+        id: `err-${Date.now()}`, role: "assistant",
+        content: "Something went wrong. Please try again.",
+        created_at: new Date().toISOString(),
+      }]);
+      setStreamingMsg(null);
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+  }
 
   return (
-    <div className="shrink-0 w-[130px] flex flex-col gap-2 group cursor-default">
-      <div className="w-[130px] h-[100px] rounded-xl overflow-hidden bg-gray-100 border border-gray-200 relative flex items-center justify-center">
-        {asset.file_type === "photo" ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={`${API_URL}/api/v1/assets/${asset.id}/thumbnail`}
-            alt={asset.filename}
-            className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
-            loading="lazy"
-          />
-        ) : asset.file_type === "video" ? (
-          <div className="flex flex-col items-center gap-1.5 text-gray-400">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-            <span className="text-[10px] font-medium text-gray-400">{ext}</span>
+    <div className="h-full flex flex-col bg-white">
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {!hasMessages && !loadingMessages ? (
+          /* Empty state — Claude-style centered */
+          <div className="h-full flex flex-col items-center justify-center px-6">
+            <div className="w-full max-w-2xl flex flex-col items-center">
+              {/* Logo */}
+              <div className="w-16 h-16 rounded-2xl bg-gray-900 flex items-center justify-center mb-4 shadow-lg">
+                <span className="text-2xl font-bold text-white">T</span>
+              </div>
+              <h1 className="text-2xl font-semibold text-gray-900 mb-1">TROY</h1>
+              <p className="text-sm text-gray-500 mb-8 text-center">Your personal vault assistant — ask me anything about your files</p>
+
+              {/* Input */}
+              <div className="w-full border border-gray-200 rounded-2xl px-4 py-3 bg-white shadow-sm focus-within:border-gray-400 focus-within:shadow-md transition-all">
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask TROY anything about your files…"
+                  rows={1}
+                  disabled={sending}
+                  className="w-full bg-transparent text-sm text-gray-900 placeholder-gray-400 resize-none focus:outline-none leading-relaxed max-h-40 disabled:opacity-50"
+                  style={{ height: "24px" }}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <button
+                    title="Attach from vault (coming soon)"
+                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => sendMessage()}
+                    disabled={!input.trim() || sending}
+                    className="w-8 h-8 rounded-xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-700 disabled:opacity-25 disabled:cursor-not-allowed transition-all"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Suggested prompts */}
+              <div className="flex flex-wrap gap-2 mt-4 justify-center">
+                {SUGGESTED_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => sendMessage(prompt)}
+                    className="px-4 py-2 rounded-full border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        ) : asset.file_type === "audio" ? (
-          <div className="flex flex-col items-center gap-1.5 text-gray-400">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-            </svg>
-            <span className="text-[10px] font-medium text-gray-400">{ext}</span>
+        ) : loadingMessages ? (
+          <div className="flex justify-center py-12">
+            <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-1.5 text-gray-400">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span className="text-[10px] font-medium text-gray-400">{ext}</span>
+          /* Chat messages */
+          <div className="max-w-3xl mx-auto px-6 py-8">
+            {messages.map((m) => <MessageBubble key={m.id} msg={m} />)}
+            {sending && !streamingMsg && <TypingIndicator />}
+            {streamingMsg && <MessageBubble key="streaming" msg={streamingMsg} streaming />}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
-      <div>
-        <p className="text-xs text-gray-700 truncate font-medium">{asset.filename}</p>
-        <p className="text-[11px] text-gray-400 mt-0.5">{formatDate(asset.ingested_at)}</p>
-      </div>
+
+      {/* Input bar — only shown when conversation is active */}
+      {(hasMessages || activeConvId) && (
+        <div className="shrink-0 border-t border-gray-100 bg-white px-6 py-4">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-end gap-2 border border-gray-200 rounded-2xl px-4 py-3 bg-white focus-within:border-gray-400 focus-within:shadow-sm transition-all">
+              <button
+                title="Attach from vault (coming soon)"
+                className="p-1 text-gray-400 hover:text-gray-600 transition-colors shrink-0 mb-0.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask TROY anything about your files…"
+                rows={1}
+                disabled={sending}
+                className="flex-1 bg-transparent text-sm text-gray-900 placeholder-gray-400 resize-none focus:outline-none leading-relaxed max-h-40 disabled:opacity-50"
+                style={{ height: "24px" }}
+              />
+              <button
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || sending}
+                className="w-8 h-8 rounded-xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-700 disabled:opacity-25 disabled:cursor-not-allowed transition-all shrink-0"
+              >
+                {sending ? (
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5 text-center">Enter to send · Shift+Enter for newline</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -119,142 +341,9 @@ function RecentTile({ asset }: { asset: AssetSummary }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [recent, setRecent] = useState<AssetSummary[]>([]);
-  const [counts, setCounts] = useState({ photos: 0, videos: 0, documents: 0, storageBytes: 0 });
-  const [userName, setUserName] = useState("");
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PROFILE_KEY);
-      if (raw) setUserName(JSON.parse(raw).name || "");
-    } catch { /* ignore */ }
-  }, []);
-
-  const load = useCallback(async () => {
-    try {
-      const [recentRes, photoRes, videoRes, docRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/assets?page=1&page_size=6`),
-        fetch(`${API_URL}/api/v1/assets?file_type=photo&page=1&page_size=1`),
-        fetch(`${API_URL}/api/v1/assets?file_type=video&page=1&page_size=1`),
-        fetch(`${API_URL}/api/v1/assets?file_type=document&page=1&page_size=1`),
-      ]);
-      const [recentData, photoData, videoData, docData] = await Promise.all([
-        recentRes.json(), photoRes.json(), videoRes.json(), docRes.json(),
-      ]);
-      const items: AssetSummary[] = recentData.items ?? [];
-      setRecent(items);
-      setCounts({
-        photos: photoData.total ?? 0,
-        videos: videoData.total ?? 0,
-        documents: docData.total ?? 0,
-        storageBytes: items.reduce((s: number, a: AssetSummary) => s + a.size_bytes, 0),
-      });
-    } catch { /* backend unreachable */ }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { load(); inputRef.current?.focus(); }, [load]);
-
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (q) router.push(`/search?q=${encodeURIComponent(q)}`);
-  }
-
   return (
-    <div className="min-h-full bg-white">
-      {/* Hero */}
-      <div className="max-w-3xl mx-auto px-8 pt-16 pb-10">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-8">
-          {greeting(userName)}
-        </h1>
-
-        {/* Search */}
-        <form onSubmit={handleSearch}>
-          <div className="relative">
-            <svg
-              className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none"
-              fill="none" viewBox="0 0 24 24" stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search your vault or ask TROY anything…"
-              className="w-full bg-white border border-gray-200 rounded-xl pl-12 pr-14 py-4 text-gray-900 placeholder-gray-400 text-sm shadow-sm focus:outline-none focus:border-gray-400 focus:shadow-md transition-all"
-            />
-            <button
-              type="submit"
-              disabled={!query.trim()}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-              </svg>
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* Stats */}
-      <div className="max-w-3xl mx-auto px-8 mb-10">
-        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Overview</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard label="Photos" value={counts.photos.toLocaleString()} loading={loading} icon={
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          } />
-          <StatCard label="Videos" value={counts.videos.toLocaleString()} loading={loading} icon={
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          } />
-          <StatCard label="Documents" value={counts.documents.toLocaleString()} loading={loading} icon={
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          } />
-          <StatCard label="Storage" value={loading ? "—" : formatBytes(counts.storageBytes)} loading={loading} icon={
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-            </svg>
-          } />
-        </div>
-      </div>
-
-      {/* Recently added */}
-      <div className="max-w-3xl mx-auto px-8 pb-16">
-        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Recently Added</h2>
-        {loading ? (
-          <div className="flex gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="shrink-0 w-[130px]">
-                <div className="w-[130px] h-[100px] rounded-xl bg-gray-100 animate-pulse" />
-                <div className="mt-2 h-3 w-20 bg-gray-100 rounded animate-pulse" />
-                <div className="mt-1.5 h-2.5 w-12 bg-gray-50 rounded animate-pulse" />
-              </div>
-            ))}
-          </div>
-        ) : recent.length === 0 ? (
-          <div className="py-10 text-center border border-dashed border-gray-200 rounded-xl">
-            <p className="text-sm text-gray-400">Nothing added yet — upload something to get started.</p>
-          </div>
-        ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-8 px-8">
-            {recent.map((a) => <RecentTile key={a.id} asset={a} />)}
-          </div>
-        )}
-      </div>
-    </div>
+    <Suspense fallback={<div className="h-full bg-white" />}>
+      <HomeContent />
+    </Suspense>
   );
 }

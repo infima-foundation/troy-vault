@@ -33,7 +33,9 @@ class ConversationOut(BaseModel):
     id: str
     title: str | None
     pinned: bool
+    is_starred: bool
     last_message: str | None
+    message_count: int
     created_at: str
     updated_at: str
 
@@ -55,6 +57,7 @@ class CreateConversationRequest(BaseModel):
 class PatchConversationRequest(BaseModel):
     pinned: bool | None = None
     title: str | None = None
+    is_starred: bool | None = None
 
 
 class Profile(BaseModel):
@@ -95,7 +98,6 @@ def _embed_query(text: str):
 
 
 async def _rag_context(query: str, n_results: int = 5) -> str:
-    """Return relevant document chunks as a formatted string, or empty string."""
     try:
         collection = _get_chroma_collection()
         if collection is None:
@@ -120,6 +122,35 @@ async def _rag_context(query: str, n_results: int = 5) -> str:
         return "\n\n---\n\n".join(parts)
     except Exception:
         return ""
+
+
+async def _generate_title(first_message: str) -> str:
+    """Call Ollama to generate a short 4-6 word title for the conversation."""
+    prompt = (
+        f"Generate a short 4-6 word title for a conversation that starts with: "
+        f"'{first_message[:200]}'. Return only the title, no quotes."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{OLLAMA_HOST}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            title = data.get("message", {}).get("content", "").strip()
+            # Clean up: remove surrounding quotes if present
+            title = title.strip('"\'')
+            if title:
+                return title[:80]
+    except Exception:
+        pass
+    # Fallback: truncate first message
+    return first_message[:60]
 
 
 # ─── System prompt ────────────────────────────────────────────────────────────
@@ -166,8 +197,10 @@ def _conv_out(conv: Conversation) -> dict:
         "id": str(conv.id),
         "title": conv.title,
         "pinned": conv.pinned,
+        "is_starred": getattr(conv, "is_starred", False) or False,
         "last_message": last[:120] if last else None,
-        "created_at": conv.updated_at.isoformat() if conv.updated_at else conv.created_at.isoformat(),
+        "message_count": len(conv.messages),
+        "created_at": conv.created_at.isoformat() if conv.created_at else conv.updated_at.isoformat(),
         "updated_at": conv.updated_at.isoformat() if conv.updated_at else conv.created_at.isoformat(),
     }
 
@@ -184,7 +217,6 @@ def _msg_out(msg: Message) -> dict:
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 def get_db():
-    """Re-imported here to avoid circular deps; main.py engine is used via import."""
     from main import engine
     with Session(engine) as session:
         yield session
@@ -223,6 +255,23 @@ def patch_conversation(conv_id: str, req: PatchConversationRequest, db: Session 
         conv.pinned = req.pinned
     if req.title is not None:
         conv.title = req.title
+    if req.is_starred is not None:
+        conv.is_starred = req.is_starred
+    db.commit()
+    db.refresh(conv)
+    return _conv_out(conv)
+
+
+@router.patch("/conversations/{conv_id}/star")
+def star_conversation(conv_id: str, db: Session = Depends(get_db)):
+    try:
+        cid = uuid.UUID(conv_id)
+    except ValueError:
+        raise HTTPException(422, "Invalid conversation ID")
+    conv = db.get(Conversation, cid)
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    conv.is_starred = not getattr(conv, "is_starred", False)
     db.commit()
     db.refresh(conv)
     return _conv_out(conv)
@@ -263,9 +312,7 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
     if not conv:
         raise HTTPException(404, "Conversation not found")
 
-    # Auto-title from first user message
-    if not conv.title:
-        conv.title = req.content[:80]
+    is_first_message = not conv.title and not conv.messages
 
     # Persist user message
     user_msg = Message(conversation_id=cid, role=MessageRole.user, content=req.content)
@@ -287,10 +334,21 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
     for m in history:
         ollama_messages.append({"role": m.role.value, "content": m.content})
 
-    # Commit user message before we start streaming
     db.commit()
 
     async def stream_tokens():
+        # Generate title from first message via Ollama
+        if is_first_message:
+            generated_title = await _generate_title(req.content)
+            from main import engine as _engine
+            with Session(_engine) as sess:
+                c = sess.get(Conversation, cid)
+                if c and not c.title:
+                    c.title = generated_title
+                    sess.commit()
+            # Send title update event to frontend
+            yield f"data: {json.dumps({'title': generated_title})}\n\n"
+
         full_content = ""
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -320,7 +378,7 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
             )
             yield f"data: {json.dumps({'token': full_content})}\n\n"
 
-        # Persist assistant message with a fresh session (injected session may be closing)
+        # Persist assistant message
         from main import engine as _engine
         with Session(_engine) as sess:
             asst_msg = Message(

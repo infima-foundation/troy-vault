@@ -1,6 +1,7 @@
 import os
 import uuid as _uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,7 +10,8 @@ load_dotenv()
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, select, func, or_
+from pydantic import BaseModel
+from sqlalchemy import create_engine, select, func, or_, text
 from sqlalchemy.orm import Session
 import uvicorn
 
@@ -18,6 +20,7 @@ from ingestion.router import route_file
 from chat import router as chat_router
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./troy.db")
+MEDIA_PATH = os.getenv("MEDIA_PATH", "./data/media")
 
 _engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):
@@ -27,10 +30,25 @@ else:
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
+_MIGRATIONS = [
+    "ALTER TABLE assets ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE assets ADD COLUMN deleted_at DATETIME",
+    "ALTER TABLE assets ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE conversations ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # Run migrations (idempotent — ignore errors when column already exists)
+    with engine.connect() as conn:
+        for stmt in _MIGRATIONS:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
     yield
 
 
@@ -53,7 +71,6 @@ def get_db():
 
 
 def _parse_uuid(asset_id: str) -> _uuid.UUID:
-    """Parse a UUID string and raise 422 if invalid."""
     try:
         return _uuid.UUID(asset_id)
     except ValueError:
@@ -75,7 +92,6 @@ def health():
 
 @app.post("/api/v1/ingest")
 async def ingest(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Accept a single file upload and route it through the appropriate pipeline."""
     asset_id = await route_file(file, db)
     return {"asset_id": str(asset_id), "filename": file.filename}
 
@@ -89,12 +105,18 @@ def list_assets(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     file_type: FileType | None = Query(None),
-    date_from: str | None = Query(None, description="ISO date, e.g. 2024-01-01"),
-    date_to: str | None = Query(None, description="ISO date, e.g. 2024-12-31"),
-    tags: str | None = Query(None, description="Comma-separated tag values"),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    tags: str | None = Query(None),
+    deleted: bool = Query(False, description="If true, return only soft-deleted assets"),
     db: Session = Depends(get_db),
 ):
     stmt = select(Asset)
+
+    if deleted:
+        stmt = stmt.where(Asset.is_deleted == True)
+    else:
+        stmt = stmt.where(Asset.is_deleted == False)
 
     if file_type:
         stmt = stmt.where(Asset.file_type == file_type)
@@ -130,7 +152,7 @@ def list_assets(
 @app.get("/api/v1/assets/{asset_id}")
 def get_asset(asset_id: str, db: Session = Depends(get_db)):
     asset = db.get(Asset, _parse_uuid(asset_id))
-    if not asset:
+    if not asset or asset.is_deleted:
         raise HTTPException(status_code=404, detail="Asset not found")
     return _asset_detail(asset)
 
@@ -146,10 +168,10 @@ def search_assets(
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """Full-text search over filename and tag values."""
     like = f"%{q}%"
     stmt = (
         select(Asset)
+        .where(Asset.is_deleted == False)
         .where(
             or_(
                 Asset.filename.ilike(like),
@@ -165,7 +187,7 @@ def search_assets(
 
 
 # ---------------------------------------------------------------------------
-# Thumbnail
+# Thumbnail / file serving
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/assets/{asset_id}/thumbnail")
@@ -174,10 +196,8 @@ def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    # Prefer the pre-generated thumbnail; fall back to the original file.
     for candidate in [asset.thumbnail_path, asset.file_path]:
         if candidate and Path(candidate).exists():
-            # Guess a reasonable media type from the extension.
             suffix = Path(candidate).suffix.lower()
             media_type = {
                 ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -188,6 +208,193 @@ def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
             return FileResponse(candidate, media_type=media_type)
 
     raise HTTPException(status_code=404, detail="No image file available for this asset")
+
+
+@app.get("/api/v1/assets/{asset_id}/file")
+def get_file(asset_id: str, db: Session = Depends(get_db)):
+    """Serve the original file for download."""
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    if asset.file_path and Path(asset.file_path).exists():
+        return FileResponse(
+            asset.file_path,
+            media_type=asset.mime_type or "application/octet-stream",
+            filename=asset.filename,
+        )
+    raise HTTPException(status_code=404, detail="File not found on disk")
+
+
+# ---------------------------------------------------------------------------
+# Soft delete / restore / permanent delete
+# ---------------------------------------------------------------------------
+
+@app.delete("/api/v1/assets/{asset_id}", status_code=200)
+def soft_delete_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    asset.is_deleted = True
+    asset.deleted_at = datetime.utcnow()
+    db.commit()
+    return {"id": str(asset.id), "is_deleted": True}
+
+
+@app.post("/api/v1/assets/{asset_id}/restore", status_code=200)
+def restore_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    asset.is_deleted = False
+    asset.deleted_at = None
+    db.commit()
+    return {"id": str(asset.id), "is_deleted": False}
+
+
+@app.delete("/api/v1/assets/{asset_id}/permanent", status_code=200)
+def permanent_delete_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    # Remove files from disk
+    for path in [asset.file_path, asset.thumbnail_path]:
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+    db.delete(asset)
+    db.commit()
+    return {"id": asset_id, "deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Content update (editor auto-save)
+# ---------------------------------------------------------------------------
+
+class ContentUpdateRequest(BaseModel):
+    content: str
+
+
+@app.patch("/api/v1/assets/{asset_id}/content")
+def update_content(asset_id: str, req: ContentUpdateRequest, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.file_path:
+        try:
+            Path(asset.file_path).write_text(req.content, encoding="utf-8")
+            asset.size_bytes = len(req.content.encode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to write file: {e}")
+    db.commit()
+    return {"id": str(asset.id), "size_bytes": asset.size_bytes}
+
+
+# ---------------------------------------------------------------------------
+# Filename rename
+# ---------------------------------------------------------------------------
+
+class FilenameUpdateRequest(BaseModel):
+    filename: str
+
+
+@app.patch("/api/v1/assets/{asset_id}/filename")
+def rename_asset(asset_id: str, req: FilenameUpdateRequest, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    new_name = req.filename.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="Filename cannot be empty")
+    # Rename file on disk
+    if asset.file_path:
+        old_path = Path(asset.file_path)
+        new_path = old_path.parent / new_name
+        if old_path.exists() and not new_path.exists():
+            try:
+                old_path.rename(new_path)
+                asset.file_path = str(new_path)
+            except Exception:
+                pass
+    asset.filename = new_name
+    db.commit()
+    return _asset_summary(asset)
+
+
+# ---------------------------------------------------------------------------
+# Star / unstar asset
+# ---------------------------------------------------------------------------
+
+@app.patch("/api/v1/assets/{asset_id}/star")
+def star_asset(asset_id: str, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    asset.is_starred = not asset.is_starred
+    db.commit()
+    return {"id": str(asset.id), "is_starred": asset.is_starred}
+
+
+# ---------------------------------------------------------------------------
+# Create document/spreadsheet/presentation asset
+# ---------------------------------------------------------------------------
+
+class CreateDocumentRequest(BaseModel):
+    filename: str
+    doc_type: str = "document"  # document | spreadsheet | presentation
+
+
+@app.post("/api/v1/documents/new")
+def create_document(req: CreateDocumentRequest, db: Session = Depends(get_db)):
+    """Create a new empty editable document asset."""
+    import hashlib
+    media_path = Path(MEDIA_PATH)
+    media_path.mkdir(parents=True, exist_ok=True)
+
+    # Generate unique filename
+    safe_name = req.filename or f"Untitled {req.doc_type.capitalize()}"
+    if req.doc_type == "spreadsheet":
+        ext = ".csv"
+        mime = "text/csv"
+        content = ""
+    elif req.doc_type == "presentation":
+        ext = ".md"
+        mime = "text/markdown"
+        content = "# Presentation\n\n## Slide 1\n\n"
+    else:
+        ext = ".md"
+        mime = "text/markdown"
+        content = f"# {safe_name}\n\n"
+
+    if not safe_name.endswith(ext):
+        safe_name = safe_name + ext
+
+    file_path = media_path / safe_name
+    # Avoid collisions
+    counter = 1
+    while file_path.exists():
+        stem = Path(safe_name).stem
+        file_path = media_path / f"{stem} ({counter}){ext}"
+        counter += 1
+
+    file_path.write_text(content, encoding="utf-8")
+    content_bytes = content.encode("utf-8")
+    sha256 = hashlib.sha256(content_bytes).hexdigest()
+
+    asset = Asset(
+        filename=file_path.name,
+        file_type=FileType.document,
+        mime_type=mime,
+        sha256_hash=sha256,
+        file_path=str(file_path),
+        size_bytes=len(content_bytes),
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return _asset_summary(asset)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +414,9 @@ def _asset_summary(asset: Asset) -> dict:
         "lat": asset.lat,
         "lon": asset.lon,
         "metadata_json": asset.metadata_json,
+        "is_deleted": asset.is_deleted,
+        "deleted_at": asset.deleted_at.isoformat() if asset.deleted_at else None,
+        "is_starred": asset.is_starred,
     }
 
 

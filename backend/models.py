@@ -52,6 +52,13 @@ class Asset(Base):
     camera_make = Column(String(128), nullable=True)
     camera_model = Column(String(128), nullable=True)
 
+    # Soft delete
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Star/favourite
+    is_starred = Column(Boolean, nullable=False, default=False)
+
     tags = relationship("Tag", back_populates="asset", cascade="all, delete-orphan")
     faces = relationship("Face", back_populates="asset", cascade="all, delete-orphan")
 
@@ -59,6 +66,7 @@ class Asset(Base):
         Index("ix_assets_file_type", "file_type"),
         Index("ix_assets_captured_at", "captured_at"),
         Index("ix_assets_ingested_at", "ingested_at"),
+        Index("ix_assets_is_deleted", "is_deleted"),
     )
 
 
@@ -93,6 +101,7 @@ class Conversation(Base):
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String(256), nullable=True)
     pinned = Column(Boolean, nullable=False, default=False)
+    is_starred = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

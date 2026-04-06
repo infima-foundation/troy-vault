@@ -14,14 +14,9 @@ interface Conversation {
   updated_at: string;
 }
 
-// ─── Tiny SVG icons ───────────────────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
 const Icons = {
-  Home: () => (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-    </svg>
-  ),
   Chat: () => (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -42,9 +37,19 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
     </svg>
   ),
-  Album: () => (
+  Files: () => (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+    </svg>
+  ),
+  Share: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+    </svg>
+  ),
+  Trash: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
     </svg>
   ),
   HardDrive: () => (
@@ -52,19 +57,13 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
     </svg>
   ),
-  Settings: () => (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
-  ),
-  ChevronRight: () => (
-    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+  ChevronRight: ({ className }: { className?: string }) => (
+    <svg className={className ?? "w-3 h-3"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
     </svg>
   ),
-  ChevronDown: () => (
-    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+  ChevronDown: ({ className }: { className?: string }) => (
+    <svg className={className ?? "w-3 h-3"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
     </svg>
   ),
@@ -88,54 +87,21 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
     </svg>
   ),
+  Spreadsheet: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 10h18M3 14h18M10 3v18M6 3h12a1 1 0 011 1v16a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" />
+    </svg>
+  ),
+  Presentation: () => (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+    </svg>
+  ),
 };
-
-// ─── Drive section items ──────────────────────────────────────────────────────
-
-const driveItems = [
-  {
-    href: "/library",
-    label: "Photos & Videos",
-    icon: <Icons.Photo />,
-    subItems: [
-      { href: "/places", label: "Places", soon: true },
-      { href: "/faces", label: "Faces", soon: true },
-      { href: "/library", label: "Years", soon: true },
-    ],
-  },
-  {
-    href: "/documents",
-    label: "Documents",
-    icon: <Icons.Document />,
-    subItems: [
-      { href: "/documents", label: "PDF", soon: false },
-      { href: "/documents", label: "Word", soon: false },
-      { href: "/documents", label: "Text", soon: false },
-    ],
-  },
-  {
-    href: "/files",
-    label: "Files",
-    icon: <Icons.Folder />,
-    subItems: [],
-  },
-  {
-    href: "/albums",
-    label: "Albums",
-    icon: <Icons.Album />,
-    subItems: [],
-  },
-];
 
 function initials(name: string): string {
   if (!name.trim()) return "TV";
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  return name.split(" ").filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
 // ─── Sidebar component ────────────────────────────────────────────────────────
@@ -148,17 +114,14 @@ export function Sidebar() {
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [userName, setUserName] = useState("");
-  const [expandedDrive, setExpandedDrive] = useState<string | null>(null);
+  const [driveOpen, setDriveOpen] = useState(true);
+  const [photosOpen, setPhotosOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
 
-  // Load profile + conversations
   useEffect(() => {
     try {
       const raw = localStorage.getItem(PROFILE_KEY);
-      if (raw) {
-        const p = JSON.parse(raw);
-        setUserName(p.name || "");
-      }
+      if (raw) setUserName(JSON.parse(raw).name || "");
     } catch { /* ignore */ }
 
     fetch(`${API_URL}/api/v1/chat/conversations`)
@@ -167,77 +130,73 @@ export function Sidebar() {
       .catch(() => {});
   }, []);
 
-  // Close "New" menu on outside click
   useEffect(() => {
     if (!showNewMenu) return;
     const handler = (e: MouseEvent) => {
-      if (!newMenuRef.current?.contains(e.target as Node)) {
-        setShowNewMenu(false);
-      }
+      if (!newMenuRef.current?.contains(e.target as Node)) setShowNewMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showNewMenu]);
 
-  // Auto-expand drive section when on a matching route
-  useEffect(() => {
-    const match = driveItems.find((d) => pathname.startsWith(d.href) && d.href !== "/");
-    if (match) setExpandedDrive((prev) => prev ?? match.href);
-  }, [pathname]);
-
   function isActive(href: string, exact = false) {
     return exact ? pathname === href : pathname.startsWith(href);
   }
 
-  const navLinkClass = (active: boolean) =>
-    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
-      active
-        ? "bg-gray-100 text-gray-900 font-medium"
-        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+  const navLink = (active: boolean, extra = "") =>
+    `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${extra} ${
+      active ? "bg-gray-100 text-gray-900 font-medium" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
     }`;
+
+  const subLink = (active: boolean) =>
+    `flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+      active ? "bg-gray-100 text-gray-700 font-medium" : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+    }`;
+
+  async function createNewDoc(docType: "document" | "spreadsheet" | "presentation") {
+    setShowNewMenu(false);
+    try {
+      const asset = await fetch(`${API_URL}/api/v1/documents/new`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: `Untitled ${docType}`, doc_type: docType }),
+      }).then((r) => r.json());
+      router.push(`/editor/${asset.id}`);
+    } catch { /* ignore */ }
+  }
 
   return (
     <aside
-      className={`${
-        collapsed ? "w-16" : "w-[280px]"
-      } shrink-0 bg-white border-r border-gray-200 flex flex-col transition-[width] duration-200 overflow-hidden`}
+      className={`${collapsed ? "w-16" : "w-[260px]"} shrink-0 bg-white border-r border-gray-200 flex flex-col transition-[width] duration-200 overflow-hidden`}
     >
-      {/* ── Logo + toggle ──────────────────────────────────────────────── */}
+      {/* Logo + toggle */}
       <div className="flex items-center justify-between px-4 h-14 border-b border-gray-100 shrink-0">
         {!collapsed && (
-          <span className="text-base font-bold text-gray-900 tracking-tight select-none">
+          <Link
+            href="/"
+            className="text-base font-bold text-gray-900 tracking-tight select-none hover:text-gray-700 transition-colors"
+          >
             TROY
-          </span>
+          </Link>
         )}
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className={`p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors ${
-            collapsed ? "mx-auto" : ""
-          }`}
+          className={`p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors ${collapsed ? "mx-auto" : ""}`}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <Icons.Expand /> : <Icons.Collapse />}
         </button>
       </div>
 
-      {/* ── Scrollable content ────────────────────────────────────────── */}
+      {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-1">
-        {/* Home */}
-        <div className="px-2">
-          <Link href="/" className={navLinkClass(isActive("/", true))}>
-            <Icons.Home />
-            {!collapsed && <span>Home</span>}
-          </Link>
-        </div>
 
         {/* New button */}
         <div className="px-2 py-1" ref={newMenuRef}>
           <div className="relative">
             <button
               onClick={() => setShowNewMenu((v) => !v)}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                collapsed ? "justify-center" : ""
-              } bg-gray-900 text-white hover:bg-gray-700`}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${collapsed ? "justify-center" : ""} bg-gray-900 text-white hover:bg-gray-700`}
             >
               <Icons.Plus />
               {!collapsed && <span>New</span>}
@@ -248,38 +207,40 @@ export function Sidebar() {
               )}
             </button>
 
-            {/* Dropdown menu */}
             {showNewMenu && (
-              <div className="absolute left-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+              <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
                 <button
                   onClick={() => { setShowNewMenu(false); openUpload("media"); }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Icons.Upload />
-                  Upload Photos &amp; Videos
-                </button>
-                <button
-                  onClick={() => { setShowNewMenu(false); openUpload("docs"); }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  <Icons.Document />
-                  Upload Documents
+                  Upload File
                 </button>
                 <div className="my-1 border-t border-gray-100" />
                 <button
-                  onClick={async () => {
-                    setShowNewMenu(false);
-                    try {
-                      const conv = await fetch(`${API_URL}/api/v1/chat/conversations`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({}),
-                      }).then((r) => r.json());
-                      router.push(`/chat?conv=${conv.id}`);
-                    } catch {
-                      router.push("/chat");
-                    }
-                  }}
+                  onClick={() => createNewDoc("document")}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <Icons.Document />
+                  New Document
+                </button>
+                <button
+                  onClick={() => createNewDoc("spreadsheet")}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <Icons.Spreadsheet />
+                  New Spreadsheet
+                </button>
+                <button
+                  onClick={() => createNewDoc("presentation")}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <Icons.Presentation />
+                  New Presentation
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  onClick={() => { setShowNewMenu(false); router.push("/"); }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Icons.Chat />
@@ -290,97 +251,108 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* Chat shortcut */}
-        <div className="px-2">
-          <Link href="/chat" className={navLinkClass(isActive("/chat"))}>
-            <Icons.Chat />
-            {!collapsed && <span>Chat</span>}
-          </Link>
-        </div>
-
-        {/* Divider */}
         <div className="mx-2 my-1 border-t border-gray-100" />
 
-        {/* Your Drive section */}
+        {/* YOUR DRIVE section */}
         {!collapsed && (
-          <div className="px-4 py-1 flex items-center gap-1.5">
-            <Icons.HardDrive />
-            <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-              Your Drive
-            </span>
-          </div>
-        )}
+          <div className="px-2">
+            {/* Drive header — clicking toggles collapse */}
+            <button
+              onClick={() => setDriveOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-400 uppercase tracking-widest hover:bg-gray-50 hover:text-gray-600 transition-colors"
+            >
+              <Icons.HardDrive />
+              <span className="flex-1 text-left">Your Drive</span>
+              {driveOpen ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
+            </button>
 
-        <div className="px-2 space-y-0.5">
-          {driveItems.map((item) => {
-            const active = isActive(item.href);
-            const expanded = expandedDrive === item.href;
-            const hasSubItems = item.subItems.length > 0;
+            {driveOpen && (
+              <div className="mt-0.5 space-y-0.5">
+                {/* All Files */}
+                <Link href="/drive" className={subLink(isActive("/drive", true))}>
+                  <Icons.Files />
+                  All Files
+                </Link>
 
-            return (
-              <div key={item.href}>
-                <div className={navLinkClass(active) + " cursor-pointer"}>
-                  <Link
-                    href={item.href}
-                    className="flex items-center gap-2.5 flex-1 min-w-0"
-                  >
-                    {item.icon}
-                    {!collapsed && (
-                      <span className="truncate flex-1">{item.label}</span>
-                    )}
-                  </Link>
-                  {!collapsed && hasSubItems && (
+                {/* Photos & Videos with sub-chevron */}
+                <div>
+                  <div className={`flex items-center rounded-md transition-colors ${isActive("/library") ? "bg-gray-100" : "hover:bg-gray-50"}`}>
+                    <Link href="/library" className="flex items-center gap-2 px-3 py-1.5 flex-1 text-xs text-gray-500 hover:text-gray-700 transition-colors">
+                      <Icons.Photo />
+                      <span className={isActive("/library") ? "text-gray-700 font-medium" : ""}>Photos &amp; Videos</span>
+                    </Link>
                     <button
-                      onClick={() => setExpandedDrive(expanded ? null : item.href)}
-                      className="p-0.5 text-gray-400 hover:text-gray-600 shrink-0"
+                      onClick={() => setPhotosOpen((v) => !v)}
+                      className="px-2 py-1.5 text-gray-400 hover:text-gray-600 transition-colors"
                     >
-                      {expanded ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
+                      {photosOpen ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
                     </button>
+                  </div>
+
+                  {photosOpen && (
+                    <div className="ml-5 mt-0.5 space-y-0.5">
+                      <Link href="/library" className="block px-3 py-1 rounded-md text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors">
+                        All
+                      </Link>
+                      <span className="flex items-center justify-between px-3 py-1 rounded-md text-xs text-gray-300 cursor-default select-none">
+                        Places
+                        <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-300">Soon</span>
+                      </span>
+                      <span className="flex items-center justify-between px-3 py-1 rounded-md text-xs text-gray-300 cursor-default select-none">
+                        Faces
+                        <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-300">Soon</span>
+                      </span>
+                      <Link href="/library?view=years" className="block px-3 py-1 rounded-md text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors">
+                        Years
+                      </Link>
+                    </div>
                   )}
                 </div>
 
-                {/* Sub-items */}
-                {!collapsed && expanded && hasSubItems && (
-                  <div className="ml-6 mt-0.5 space-y-0.5">
-                    {item.subItems.map((sub) => (
-                      <div key={sub.label} className="flex items-center">
-                        {sub.soon ? (
-                          <span className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs text-gray-400 cursor-default select-none w-full">
-                            {sub.label}
-                            <span className="ml-auto text-[9px] font-medium text-gray-300 bg-gray-100 px-1.5 py-0.5 rounded">
-                              Soon
-                            </span>
-                          </span>
-                        ) : (
-                          <Link
-                            href={sub.href}
-                            className="flex-1 px-3 py-1.5 rounded-md text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
-                          >
-                            {sub.label}
-                          </Link>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                {/* Folders */}
+                <Link href="/drive/folders" className={subLink(isActive("/drive/folders"))}>
+                  <Icons.Folder />
+                  Folders
+                </Link>
 
-        {/* Divider */}
+                {/* Shared */}
+                <Link href="/drive/shared" className={subLink(isActive("/drive/shared"))}>
+                  <Icons.Share />
+                  Shared
+                </Link>
+
+                {/* Deleted Files */}
+                <Link href="/drive/trash" className={subLink(isActive("/drive/trash"))}>
+                  <Icons.Trash />
+                  Deleted Files
+                </Link>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Collapsed drive icon */}
+        {collapsed && (
+          <div className="px-2 space-y-0.5">
+            <Link href="/drive" className={navLink(isActive("/drive", true), "justify-center")} title="All Files">
+              <Icons.Files />
+            </Link>
+            <Link href="/library" className={navLink(isActive("/library"), "justify-center")} title="Photos & Videos">
+              <Icons.Photo />
+            </Link>
+          </div>
+        )}
+
         <div className="mx-2 my-1 border-t border-gray-100" />
 
-        {/* Chats section */}
+        {/* CHATS section */}
         {!collapsed && (
           <>
             <div className="px-4 py-1 flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                Chats
-              </span>
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Chats</span>
             </div>
 
             <div className="px-2 space-y-0.5">
@@ -390,11 +362,9 @@ export function Sidebar() {
                 conversations.map((conv) => (
                   <Link
                     key={conv.id}
-                    href="/chat"
+                    href={`/?conv=${conv.id}`}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${
-                      isActive("/chat")
-                        ? "text-gray-600 hover:bg-gray-50"
-                        : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                      pathname === "/" ? "text-gray-600 hover:bg-gray-50" : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
                     }`}
                   >
                     <span className="truncate">{conv.title || "New conversation"}</span>
@@ -403,7 +373,7 @@ export function Sidebar() {
               )}
               {conversations.length > 0 && (
                 <Link
-                  href="/chat"
+                  href="/chats"
                   className="flex items-center px-3 py-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
                 >
                   See all chats →
@@ -412,9 +382,17 @@ export function Sidebar() {
             </div>
           </>
         )}
+
+        {collapsed && (
+          <div className="px-2">
+            <Link href="/chats" className={navLink(isActive("/chats"), "justify-center")} title="Chats">
+              <Icons.Chat />
+            </Link>
+          </div>
+        )}
       </div>
 
-      {/* ── Bottom: user avatar + profile ────────────────────────────── */}
+      {/* Bottom: user avatar */}
       <div className="border-t border-gray-100 p-3 shrink-0">
         <Link
           href="/profile"
@@ -425,12 +403,8 @@ export function Sidebar() {
           </div>
           {!collapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-800 truncate">
-                {userName || "Your profile"}
-              </p>
-              <p className="text-xs text-gray-400 group-hover:text-gray-500 transition-colors">
-                Profile &amp; Settings
-              </p>
+              <p className="text-sm font-medium text-gray-800 truncate">{userName || "Your profile"}</p>
+              <p className="text-xs text-gray-400 group-hover:text-gray-500 transition-colors">Profile &amp; Settings</p>
             </div>
           )}
         </Link>
