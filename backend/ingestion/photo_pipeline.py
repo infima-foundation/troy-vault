@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from models import Asset, Tag, FileType, TagSource
 from ingestion.dedup import sha256_of_bytes, find_duplicate
 from ingestion.metadata_extractor import extract_exif
+from ingestion.tagger import tag_asset
 
 MEDIA_ROOT = Path(os.getenv("MEDIA_PATH", "./data/media"))
 THUMB_WIDTH = 400
@@ -91,6 +92,17 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
     _add_exif_tags(asset_id, exif, db)
 
     db.commit()
+
+    # LLM tagging — build context from filename + EXIF
+    exif_parts = [f"filename: {filename}"]
+    if exif.get("camera_make"):
+        exif_parts.append(f"camera: {exif['camera_make']} {exif.get('camera_model', '')}")
+    if exif.get("datetime_original"):
+        exif_parts.append(f"date: {exif['datetime_original']}")
+    if exif.get("lat") is not None:
+        exif_parts.append(f"gps: {exif['lat']}, {exif['lon']}")
+    await tag_asset(asset_id, "photo", "\n".join(exif_parts), db)
+
     return asset_id
 
 

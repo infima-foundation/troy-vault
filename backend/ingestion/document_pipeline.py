@@ -35,6 +35,7 @@ except ImportError:
 
 from models import Asset, FileType
 from ingestion.dedup import sha256_of_bytes, find_duplicate
+from ingestion.tagger import tag_asset
 
 MEDIA_ROOT = Path(os.getenv("MEDIA_PATH", "./data/media"))
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma_data")
@@ -111,6 +112,11 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
     )
     db.add(asset)
     db.commit()
+
+    # LLM tagging — pass up to 2000 chars of extracted text
+    if text:
+        await tag_asset(asset_id, "document", text[:2000], db)
+
     return asset_id
 
 
