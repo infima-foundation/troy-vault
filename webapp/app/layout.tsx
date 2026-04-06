@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { SidebarNav } from "./components/SidebarNav";
+import { Sidebar } from "./components/Sidebar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "troy-vault",
+  title: "TROY",
   description: "Local-first personal media vault by Infima Foundation",
 };
 
@@ -24,31 +24,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="h-full flex bg-[#0a0a0a] text-white">
-        {/* Sidebar */}
-        <aside className="w-56 shrink-0 flex flex-col bg-[#0a0a0a] border-r border-white/8 py-6">
-          {/* Logo */}
-          <div className="px-5 mb-8">
-            <span className="text-xs font-semibold tracking-widest uppercase text-white/30">
-              troy-vault
-            </span>
-          </div>
-
-          {/* Nav — client component for active highlighting */}
-          <SidebarNav />
-
-          {/* Footer */}
-          <div className="px-5 mt-6">
-            <span className="text-xs text-white/15">Infima Foundation</span>
-          </div>
-        </aside>
-
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto">{children}</main>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
+      <body className="h-full flex bg-gray-50 text-gray-900 antialiased">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto min-w-0">{children}</main>
       </body>
     </html>
   );
