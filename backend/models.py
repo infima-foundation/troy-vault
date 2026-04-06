@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Integer, BigInteger, Float, DateTime, ForeignKey,
-    Enum as SAEnum, JSON, Text, Index, Uuid
+    Enum as SAEnum, JSON, Text, Index, Uuid, Boolean
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.sql import func
@@ -80,6 +80,44 @@ class Tag(Base):
         Index("ix_tags_asset_id", "asset_id"),
         Index("ix_tags_key_value", "key", "value"),
     )
+
+
+class MessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String(256), nullable=True)
+    pinned = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    messages = relationship(
+        "Message", back_populates="conversation",
+        cascade="all, delete-orphan", order_by="Message.created_at",
+    )
+
+    __table_args__ = (Index("ix_conversations_updated_at", "updated_at"),)
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    role = Column(SAEnum(MessageRole), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    conversation = relationship("Conversation", back_populates="messages")
+
+    __table_args__ = (Index("ix_messages_conversation_id", "conversation_id"),)
 
 
 class Face(Base):

@@ -15,6 +15,7 @@ import uvicorn
 
 from models import Base, Asset, FileType
 from ingestion.router import route_file
+from chat import router as chat_router
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./troy.db")
 
@@ -34,6 +35,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="troy-vault", version="0.1.0", lifespan=lifespan)
+
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,
