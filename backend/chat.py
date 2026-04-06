@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -269,9 +270,9 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
     # Persist user message
     user_msg = Message(conversation_id=cid, role=MessageRole.user, content=req.content)
     db.add(user_msg)
-    db.flush()  # so it appears in conv.messages for history
+    db.flush()
 
-    # Build message history for Ollama
+    # Build message history for Ollama (read while session is open)
     history = db.scalars(
         select(Message)
         .where(Message.conversation_id == cid)
@@ -286,28 +287,65 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
     for m in history:
         ollama_messages.append({"role": m.role.value, "content": m.content})
 
-    # Call Ollama /api/chat
-    assistant_content: str
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{OLLAMA_HOST}/api/chat",
-                json={"model": OLLAMA_MODEL, "messages": ollama_messages, "stream": False},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            assistant_content = data["message"]["content"]
-    except Exception:
-        assistant_content = (
-            "I'm having trouble reaching the language model right now. "
-            "Please make sure Ollama is running with `ollama serve`."
-        )
-
-    # Persist assistant message
-    asst_msg = Message(conversation_id=cid, role=MessageRole.assistant, content=assistant_content)
-    db.add(asst_msg)
-
-    conv.updated_at = datetime.utcnow()
+    # Commit user message before we start streaming
     db.commit()
 
-    return _msg_out(asst_msg)
+    async def stream_tokens():
+        full_content = ""
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{OLLAMA_HOST}/api/chat",
+                    json={"model": OLLAMA_MODEL, "messages": ollama_messages, "stream": True},
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            full_content += token
+                            yield f"data: {json.dumps({'token': token})}\n\n"
+                        if data.get("done"):
+                            break
+        except Exception:
+            full_content = (
+                "I'm having trouble reaching the language model right now. "
+                "Please make sure Ollama is running with `ollama serve`."
+            )
+            yield f"data: {json.dumps({'token': full_content})}\n\n"
+
+        # Persist assistant message with a fresh session (injected session may be closing)
+        from main import engine as _engine
+        with Session(_engine) as sess:
+            asst_msg = Message(
+                conversation_id=cid,
+                role=MessageRole.assistant,
+                content=full_content or "(no response)",
+            )
+            sess.add(asst_msg)
+            c = sess.get(Conversation, cid)
+            if c:
+                c.updated_at = datetime.utcnow()
+            sess.commit()
+            sess.refresh(asst_msg)
+            done_event = {
+                "done": True,
+                "id": str(asst_msg.id),
+                "role": "assistant",
+                "content": asst_msg.content,
+                "created_at": asst_msg.created_at.isoformat(),
+            }
+
+        yield f"data: {json.dumps(done_event)}\n\n"
+
+    return StreamingResponse(
+        stream_tokens(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

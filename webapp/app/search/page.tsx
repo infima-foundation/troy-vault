@@ -1,32 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface AssetSummary {
   id: string;
   filename: string;
-  file_type: string;
+  file_type: "photo" | "video" | "audio" | "document";
   mime_type: string;
   size_bytes: number;
   captured_at: string | null;
   ingested_at: string;
   thumbnail_path: string | null;
-  lat: number | null;
-  lon: number | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+function formatDate(s: string | null): string {
+  if (!s) return "—";
+  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function formatBytes(bytes: number): string {
@@ -35,18 +31,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Wrap every occurrence of `term` in the string with a <mark> element. */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function Highlighted({ text, term }: { text: string; term: string }) {
   if (!term.trim()) return <span>{text}</span>;
-
   const parts = text.split(new RegExp(`(${escapeRegex(term)})`, "gi"));
   return (
     <span>
       {parts.map((part, i) =>
         part.toLowerCase() === term.toLowerCase() ? (
-          <mark key={i} className="bg-yellow-400/30 text-yellow-200 rounded-sm px-0.5">
-            {part}
-          </mark>
+          <mark key={i} className="bg-yellow-100 text-yellow-800 rounded-sm px-0.5 not-italic">{part}</mark>
         ) : (
           <span key={i}>{part}</span>
         )
@@ -55,108 +51,109 @@ function Highlighted({ text, term }: { text: string; term: string }) {
   );
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+// ─── Result tiles (photo grid) ────────────────────────────────────────────────
 
-// ─── Result item ─────────────────────────────────────────────────────────────
-
-function ResultItem({ asset, query }: { asset: AssetSummary; query: string }) {
-  const isPhoto = asset.file_type === "photo";
-  const isVideo = asset.file_type === "video";
-  const isAudio = asset.file_type === "audio";
-
-  const typeLabel = {
-    photo: "Photo",
-    video: "Video",
-    audio: "Audio",
-    document: "Document",
-  }[asset.file_type] ?? asset.file_type;
-
-  const typeBadgeColor = {
-    photo: "bg-purple-500/15 text-purple-300",
-    video: "bg-blue-500/15 text-blue-300",
-    audio: "bg-green-500/15 text-green-300",
-    document: "bg-orange-500/15 text-orange-300",
-  }[asset.file_type] ?? "bg-white/10 text-white/50";
-
+function PhotoTile({ asset, query }: { asset: AssetSummary; query: string }) {
   return (
-    <div className="flex items-center gap-4 px-4 py-3.5 rounded-xl bg-[#111] hover:bg-[#1a1a1a] transition-colors">
-      {/* Thumbnail or icon */}
-      <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0 bg-[#1a1a1a] flex items-center justify-center">
-        {(isPhoto || isVideo) && asset.thumbnail_path ? (
+    <div className="flex flex-col gap-1.5 group">
+      <div className="aspect-square rounded-xl overflow-hidden bg-gray-100 border border-gray-200 relative">
+        {asset.thumbnail_path ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/assets/${asset.id}/thumbnail`}
+            src={`${API_URL}/api/v1/assets/${asset.id}/thumbnail`}
             alt={asset.filename}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+            loading="lazy"
           />
-        ) : isAudio ? (
-          <svg className="w-5 h-5 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {asset.file_type === "video" ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              )}
+            </svg>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-gray-700 truncate font-medium">
+        <Highlighted text={asset.filename} term={query} />
+      </p>
+      <p className="text-[11px] text-gray-400">{formatDate(asset.captured_at ?? asset.ingested_at)}</p>
+    </div>
+  );
+}
+
+// ─── Result rows (docs/audio) ─────────────────────────────────────────────────
+
+function FileRow({ asset, query }: { asset: AssetSummary; query: string }) {
+  const typeColors: Record<string, string> = {
+    document: "bg-orange-50 text-orange-600 border-orange-100",
+    audio: "bg-violet-50 text-violet-600 border-violet-100",
+  };
+  const typeLabel: Record<string, string> = {
+    document: "Doc",
+    audio: "Audio",
+  };
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-gray-50 transition-colors group">
+      {/* Icon */}
+      <div className="w-10 h-10 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+        {asset.file_type === "audio" ? (
+          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
           </svg>
         ) : (
-          <svg className="w-5 h-5 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         )}
       </div>
 
-      {/* Text */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">
+        <p className="text-sm font-medium text-gray-900 truncate">
           <Highlighted text={asset.filename} term={query} />
         </p>
-        <p className="text-xs text-white/40 mt-0.5">
+        <p className="text-xs text-gray-400 mt-0.5">
           {formatDate(asset.captured_at ?? asset.ingested_at)} · {formatBytes(asset.size_bytes)}
         </p>
       </div>
 
-      {/* Type badge */}
-      <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${typeBadgeColor}`}>
-        {typeLabel}
+      <span className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${typeColors[asset.file_type] ?? "bg-gray-100 text-gray-500 border-gray-200"}`}>
+        {typeLabel[asset.file_type] ?? asset.file_type}
       </span>
     </div>
   );
 }
 
-// ─── Empty / Loading states ───────────────────────────────────────────────────
+// ─── Group section ────────────────────────────────────────────────────────────
 
-function SearchingState() {
+function ResultGroup({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mb-4" />
-      <p className="text-white/50 text-sm">Searching your vault…</p>
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest">{title}</h2>
+        <span className="text-xs text-gray-400 tabular-nums">{count}</span>
+      </div>
+      {children}
     </div>
   );
 }
 
-function NoResults({ query }: { query: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <svg className="w-12 h-12 text-white/20 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
-      <p className="text-white/50 text-sm">
-        No results for <span className="text-white/70 font-medium">"{query}"</span>
-      </p>
-    </div>
-  );
-}
+// ─── Inner content (needs useSearchParams) ────────────────────────────────────
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function SearchContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialQ = searchParams.get("q") ?? "";
 
-export default function SearchPage() {
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
+  const [query, setQuery] = useState(initialQ);
+  const [submitted, setSubmitted] = useState(initialQ);
   const [results, setResults] = useState<AssetSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Autofocus on mount
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   const doSearch = useCallback(async (q: string) => {
     const trimmed = q.trim();
@@ -165,52 +162,45 @@ export default function SearchPage() {
     setLoading(true);
     setResults([]);
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/search?q=${encodeURIComponent(trimmed)}`
-      );
+      const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
       setResults(data.items ?? []);
-    } catch {
-      // backend unreachable — show no-results state silently
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* backend unreachable */ }
+    finally { setLoading(false); }
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    doSearch(query);
-  };
+  // Auto-search on mount if q is in URL
+  useEffect(() => {
+    if (initialQ) doSearch(initialQ);
+    else inputRef.current?.focus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const hasSearched = submitted.length > 0;
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    router.push(`/search?q=${encodeURIComponent(q)}`);
+    doSearch(q);
+  }
+
+  // Group results
+  const mediaItems = results.filter((a) => a.file_type === "photo" || a.file_type === "video");
+  const docItems = results.filter((a) => a.file_type === "document");
+  const audioItems = results.filter((a) => a.file_type === "audio");
+
+  const hasResults = results.length > 0;
 
   return (
-    <div className="flex flex-col items-center px-6 pt-16 pb-8">
-      {/* Search bar */}
-      <div className={`w-full max-w-2xl transition-all duration-300 ${hasSearched ? "mb-8" : "mb-0"}`}>
-        {!hasSearched && (
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-semibold text-white mb-2">Search your vault</h1>
-            <p className="text-white/40 text-sm">
-              Find photos, documents, videos, and audio
-            </p>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="relative">
-          <div className="relative flex items-center">
-            <svg
-              className="absolute left-4 w-5 h-5 text-white/30 pointer-events-none"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
+    <div className="min-h-full bg-white">
+      <div className="max-w-2xl mx-auto px-6 pt-12 pb-16">
+        {/* Search bar */}
+        <form onSubmit={handleSubmit} className="mb-8">
+          <div className="relative">
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none"
+              fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
               ref={inputRef}
@@ -218,18 +208,13 @@ export default function SearchPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search filenames, tags, locations…"
-              className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder:text-white/30 text-base focus:outline-none focus:border-white/25 focus:bg-[#1f1f1f] transition-colors"
+              className="w-full bg-white border border-gray-200 rounded-xl pl-12 pr-10 py-3.5 text-gray-900 placeholder-gray-400 text-sm shadow-sm focus:outline-none focus:border-gray-400 focus:shadow-md transition-all"
             />
             {query && (
               <button
                 type="button"
-                onClick={() => {
-                  setQuery("");
-                  setSubmitted("");
-                  setResults([]);
-                  inputRef.current?.focus();
-                }}
-                className="absolute right-4 p-1 text-white/30 hover:text-white/60 transition-colors"
+                onClick={() => { setQuery(""); setSubmitted(""); setResults([]); inputRef.current?.focus(); }}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-gray-300 hover:text-gray-500 transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -238,30 +223,76 @@ export default function SearchPage() {
             )}
           </div>
         </form>
-      </div>
 
-      {/* Results area */}
-      {hasSearched && (
-        <div className="w-full max-w-2xl">
-          {loading ? (
-            <SearchingState />
-          ) : results.length === 0 ? (
-            <NoResults query={submitted} />
-          ) : (
-            <>
-              <p className="text-xs text-white/30 mb-3 px-1">
-                {results.length} result{results.length !== 1 ? "s" : ""} for{" "}
-                <span className="text-white/50">"{submitted}"</span>
-              </p>
-              <div className="space-y-1.5">
-                {results.map((a) => (
-                  <ResultItem key={a.id} asset={a} query={submitted} />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+        {/* Results */}
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <div className="w-6 h-6 border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin mb-3" />
+            <p className="text-sm text-gray-400">Searching your vault…</p>
+          </div>
+        ) : !submitted ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <svg className="w-12 h-12 text-gray-200 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <p className="text-gray-400 text-sm">Search across all your files</p>
+          </div>
+        ) : !hasResults ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <svg className="w-12 h-12 text-gray-200 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <p className="text-sm text-gray-500">
+              No results for <span className="font-medium text-gray-700">&ldquo;{submitted}&rdquo;</span>
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Try a different keyword or check spelling</p>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            <p className="text-xs text-gray-400">
+              {results.length} result{results.length !== 1 ? "s" : ""} for{" "}
+              <span className="font-medium text-gray-600">&ldquo;{submitted}&rdquo;</span>
+            </p>
+
+            {/* Photos & Videos */}
+            {mediaItems.length > 0 && (
+              <ResultGroup title="Photos & Videos" count={mediaItems.length}>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                  {mediaItems.map((a) => <PhotoTile key={a.id} asset={a} query={submitted} />)}
+                </div>
+              </ResultGroup>
+            )}
+
+            {/* Documents */}
+            {docItems.length > 0 && (
+              <ResultGroup title="Documents" count={docItems.length}>
+                <div className="space-y-0.5">
+                  {docItems.map((a) => <FileRow key={a.id} asset={a} query={submitted} />)}
+                </div>
+              </ResultGroup>
+            )}
+
+            {/* Audio */}
+            {audioItems.length > 0 && (
+              <ResultGroup title="Audio" count={audioItems.length}>
+                <div className="space-y-0.5">
+                  {audioItems.map((a) => <FileRow key={a.id} asset={a} query={submitted} />)}
+                </div>
+              </ResultGroup>
+            )}
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+// ─── Page (Suspense wrapper required for useSearchParams) ─────────────────────
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
+      <SearchContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const PROFILE_KEY = "troy_profile";
@@ -57,7 +58,7 @@ function TypingIndicator() {
   );
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, streaming = false }: { msg: Message; streaming?: boolean }) {
   if (msg.role === "user") {
     return (
       <div className="flex justify-end mb-5">
@@ -76,8 +77,13 @@ function MessageBubble({ msg }: { msg: Message }) {
       <div className="max-w-[75%]">
         <div className="bg-gray-100 text-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
           {msg.content}
+          {streaming && (
+            <span className="inline-block w-0.5 h-4 bg-gray-500 ml-0.5 align-middle animate-pulse" />
+          )}
         </div>
-        <p className="text-[11px] text-gray-400 mt-1.5 pl-1">{formatTime(msg.created_at)}</p>
+        {!streaming && (
+          <p className="text-[11px] text-gray-400 mt-1.5 pl-1">{formatTime(msg.created_at)}</p>
+        )}
       </div>
     </div>
   );
@@ -125,10 +131,16 @@ function ConvRow({
   );
 }
 
-export default function ChatPage() {
+// ─── Inner content (needs useSearchParams) ────────────────────────────────────
+
+function ChatContent() {
+  const searchParams = useSearchParams();
+  const pendingConvId = searchParams.get("conv");
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [streamingMsg, setStreamingMsg] = useState<Message | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -145,10 +157,21 @@ export default function ChatPage() {
     try {
       const data = await fetch(`${API_URL}/api/v1/chat/conversations`).then((r) => r.json());
       setConversations(data);
-    } catch { /* ignore */ }
+      return data as Conversation[];
+    } catch { return []; }
   }, []);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
+  // Auto-select conversation from URL param (set by Sidebar "New Chat")
+  useEffect(() => {
+    if (pendingConvId && conversations.length > 0) {
+      const found = conversations.find((c) => c.id === pendingConvId);
+      if (found && activeConvId !== pendingConvId) {
+        setActiveConvId(pendingConvId);
+      }
+    }
+  }, [pendingConvId, conversations, activeConvId]);
 
   const loadMessages = useCallback(async (id: string) => {
     setLoadingMessages(true);
@@ -164,7 +187,9 @@ export default function ChatPage() {
     else setMessages([]);
   }, [activeConvId, loadMessages]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, sending]);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingMsg, sending]);
 
   async function createConversation(): Promise<string | null> {
     try {
@@ -184,21 +209,77 @@ export default function ChatPage() {
     let convId = activeConvId;
     if (!convId) { convId = await createConversation(); if (!convId) return; }
 
-    const tempMsg: Message = { id: `tmp-${Date.now()}`, role: "user", content: text, created_at: new Date().toISOString() };
+    const tempMsg: Message = {
+      id: `tmp-${Date.now()}`, role: "user", content: text,
+      created_at: new Date().toISOString(),
+    };
     setMessages((prev) => [...prev, tempMsg]);
     setInput("");
     setSending(true);
-    if (inputRef.current) { inputRef.current.style.height = "24px"; }
+    setStreamingMsg(null);
+    if (inputRef.current) inputRef.current.style.height = "24px";
+
+    const streamId = `streaming-${Date.now()}`;
 
     try {
-      const asst = await fetch(`${API_URL}/api/v1/chat/conversations/${convId}/messages`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const response = await fetch(`${API_URL}/api/v1/chat/conversations/${convId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: text, profile: loadProfile() }),
-      }).then((r) => r.json());
-      setMessages((prev) => [...prev, asst]);
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.token !== undefined) {
+              currentContent += event.token;
+              setStreamingMsg({
+                id: streamId,
+                role: "assistant",
+                content: currentContent,
+                created_at: new Date().toISOString(),
+              });
+            }
+
+            if (event.done && event.id) {
+              const finalMsg: Message = {
+                id: event.id,
+                role: "assistant",
+                content: event.content,
+                created_at: event.created_at,
+              };
+              setMessages((prev) => [...prev, finalMsg]);
+              setStreamingMsg(null);
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
+
       await loadConversations();
     } catch {
-      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: "assistant", content: "Something went wrong. Please try again.", created_at: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, {
+        id: `err-${Date.now()}`, role: "assistant",
+        content: "Something went wrong. Please try again.",
+        created_at: new Date().toISOString(),
+      }]);
+      setStreamingMsg(null);
     } finally {
       setSending(false);
       inputRef.current?.focus();
@@ -229,7 +310,7 @@ export default function ChatPage() {
     try {
       await fetch(`${API_URL}/api/v1/chat/conversations/${id}`, { method: "DELETE" });
       setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeConvId === id) { setActiveConvId(null); setMessages([]); }
+      if (activeConvId === id) { setActiveConvId(null); setMessages([]); setStreamingMsg(null); }
     } catch { /* ignore */ }
   }
 
@@ -241,7 +322,6 @@ export default function ChatPage() {
     <div className="flex h-full bg-white">
       {/* Left panel */}
       <div className="w-[300px] shrink-0 border-r border-gray-200 flex flex-col bg-white">
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-900">Chats</h2>
           <button
@@ -255,7 +335,6 @@ export default function ChatPage() {
           </button>
         </div>
 
-        {/* Conversation list */}
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {conversations.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-6">No conversations yet</p>
@@ -263,19 +342,24 @@ export default function ChatPage() {
           {pinned.length > 0 && (
             <>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest px-3 py-1.5">Pinned</p>
-              {pinned.map((c) => <ConvRow key={c.id} conv={c} active={c.id === activeConvId}
-                onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)} />)}
-              {unpinned.length > 0 && <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest px-3 py-1.5 pt-3">Recent</p>}
+              {pinned.map((c) => (
+                <ConvRow key={c.id} conv={c} active={c.id === activeConvId}
+                  onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)} />
+              ))}
+              {unpinned.length > 0 && (
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest px-3 py-1.5 pt-3">Recent</p>
+              )}
             </>
           )}
-          {unpinned.map((c) => <ConvRow key={c.id} conv={c} active={c.id === activeConvId}
-            onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)} />)}
+          {unpinned.map((c) => (
+            <ConvRow key={c.id} conv={c} active={c.id === activeConvId}
+              onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)} />
+          ))}
         </div>
       </div>
 
       {/* Right panel */}
       <div className="flex-1 flex flex-col min-w-0 bg-white">
-        {/* Conv header */}
         {activeConv && (
           <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100">
             <TroyAvatar />
@@ -309,15 +393,17 @@ export default function ChatPage() {
               <div className="flex justify-center py-12">
                 <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
               </div>
-            ) : messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center min-h-[40vh] text-center">
-                <TroyAvatar />
-                <p className="text-sm text-gray-400 mt-4">Say something to get started.</p>
-              </div>
             ) : (
               <>
+                {messages.length === 0 && !streamingMsg && !sending && (
+                  <div className="flex flex-col items-center justify-center min-h-[40vh] text-center">
+                    <TroyAvatar />
+                    <p className="text-sm text-gray-400 mt-4">Say something to get started.</p>
+                  </div>
+                )}
                 {messages.map((m) => <MessageBubble key={m.id} msg={m} />)}
-                {sending && <TypingIndicator />}
+                {sending && !streamingMsg && <TypingIndicator />}
+                {streamingMsg && <MessageBubble key="streaming" msg={streamingMsg} streaming />}
               </>
             )}
             <div ref={messagesEndRef} />
@@ -326,7 +412,6 @@ export default function ChatPage() {
 
         {/* Input */}
         <div className="border-t border-gray-100 bg-white px-6 py-4">
-          {/* Context chip */}
           {docCount !== null && (
             <div className="flex items-center gap-2 mb-3">
               <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
@@ -342,11 +427,9 @@ export default function ChatPage() {
 
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl px-4 py-3 bg-white focus-within:border-gray-400 focus-within:shadow-sm transition-all">
-              {/* Paperclip */}
               <button
                 title="Attach from vault (coming soon)"
                 className="p-1 text-gray-400 hover:text-gray-600 transition-colors shrink-0 mb-0.5"
-                onClick={() => {}}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -384,5 +467,15 @@ export default function ChatPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Page (Suspense wrapper required for useSearchParams) ─────────────────────
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="min-h-full bg-white" />}>
+      <ChatContent />
+    </Suspense>
   );
 }

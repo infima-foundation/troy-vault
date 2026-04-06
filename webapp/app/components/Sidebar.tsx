@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useUpload } from "./UploadProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const PROFILE_KEY = "troy_profile";
@@ -142,6 +143,7 @@ function initials(name: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { openUpload } = useUpload();
   const [collapsed, setCollapsed] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -250,22 +252,34 @@ export function Sidebar() {
             {showNewMenu && (
               <div className="absolute left-0 top-full mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1 overflow-hidden">
                 <button
-                  onClick={() => { setShowNewMenu(false); router.push("/library"); }}
+                  onClick={() => { setShowNewMenu(false); openUpload("media"); }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Icons.Upload />
-                  Upload Photo / Video
+                  Upload Photos &amp; Videos
                 </button>
                 <button
-                  onClick={() => { setShowNewMenu(false); router.push("/documents"); }}
+                  onClick={() => { setShowNewMenu(false); openUpload("docs"); }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Icons.Document />
-                  Upload Document
+                  Upload Documents
                 </button>
                 <div className="my-1 border-t border-gray-100" />
                 <button
-                  onClick={() => { setShowNewMenu(false); router.push("/chat"); }}
+                  onClick={async () => {
+                    setShowNewMenu(false);
+                    try {
+                      const conv = await fetch(`${API_URL}/api/v1/chat/conversations`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({}),
+                      }).then((r) => r.json());
+                      router.push(`/chat?conv=${conv.id}`);
+                    } catch {
+                      router.push("/chat");
+                    }
+                  }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <Icons.Chat />
