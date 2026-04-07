@@ -138,6 +138,7 @@ function DriveContent() {
   const [quickAccessOpen, setQuickAccessOpen] = useState(true);
   const [moveMenuAssetId, setMoveMenuAssetId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  const [contextMenuId, setContextMenuId] = useState<string | null>(null);
 
   // Drag target tracking
   const dragItemId = useRef<string | null>(null);
@@ -205,6 +206,14 @@ function DriveContent() {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, [moveMenuAssetId]);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenuId) return;
+    const h = () => setContextMenuId(null);
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [contextMenuId]);
 
   // Page-level drag-drop for file upload
   useEffect(() => {
@@ -345,6 +354,28 @@ function DriveContent() {
         setAssets((prev) => prev.filter((a) => a.id !== assetId));
       }
     } catch { /* ignore */ }
+  }
+
+  async function duplicateAsset(id: string) {
+    setContextMenuId(null);
+    try {
+      const r = await fetch(`${API_URL}/api/v1/assets/${id}/duplicate`, { method: "POST" });
+      const copy = await r.json();
+      setAssets((prev) => {
+        const idx = prev.findIndex((a) => a.id === id);
+        const next = [...prev];
+        next.splice(idx + 1, 0, copy);
+        return next;
+      });
+    } catch { /* ignore */ }
+  }
+
+  function downloadAsset(asset: Asset) {
+    setContextMenuId(null);
+    const a = document.createElement("a");
+    a.href = `${API_URL}/api/v1/assets/${asset.id}/file`;
+    a.download = asset.filename;
+    a.click();
   }
 
   // Drag-drop file into folder
@@ -578,19 +609,36 @@ function DriveContent() {
                   <p className="text-sm text-gray-500">{formatDate(folder.updated_at)}</p>
                   <p className="text-sm text-gray-500">—</p>
                   <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-50 text-amber-700">Folder</span>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={(e) => { e.stopPropagation(); toggleStarFolder(folder.id); }}
-                      className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-yellow-500 transition-colors" title="Star">
-                      <svg className="w-3.5 h-3.5" fill={folder.is_starred ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  <div className="flex items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity relative" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setContextMenuId(contextMenuId === `folder-${folder.id}` ? null : `folder-${folder.id}`); }}
+                      className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                      title="More options"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
                       </svg>
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); if (confirm(`Delete folder "${folder.name}"?`)) deleteFolder(folder.id); }}
-                      className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" title="Delete folder">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                    {contextMenuId === `folder-${folder.id}` && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
+                        <button onClick={() => { setContextMenuId(null); setEditingFolderId(folder.id); setEditingFolderName(folder.name); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                          Rename
+                        </button>
+                        <button onClick={() => { setContextMenuId(null); toggleStarFolder(folder.id); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill={folder.is_starred ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                          {folder.is_starred ? "Unstar" : "Star"}
+                        </button>
+                        <div className="my-1 border-t border-gray-100" />
+                        <button onClick={() => { setContextMenuId(null); if (confirm(`Delete folder "${folder.name}"?`)) deleteFolder(folder.id); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -657,51 +705,74 @@ function DriveContent() {
                     "bg-gray-100 text-gray-600"
                   }`}>{FILE_TYPE_LABELS[asset.file_type]}</span>
 
-                  {/* Hover actions */}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity relative">
-                    <button onClick={(e) => { e.stopPropagation(); toggleStarAsset(asset.id); }}
-                      className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-yellow-500 transition-colors" title="Star">
-                      <svg className="w-3.5 h-3.5" fill={asset.is_starred ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                  {/* Three-dot context menu */}
+                  <div className="flex items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity relative" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setContextMenuId(contextMenuId === `asset-${asset.id}` ? null : `asset-${asset.id}`); }}
+                      className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                      title="More options"
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
                       </svg>
                     </button>
-                    {/* Move to folder */}
-                    <div className="relative">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setMoveMenuAssetId(moveMenuAssetId === asset.id ? null : asset.id); }}
-                        className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors" title="Move to folder">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                        </svg>
-                      </button>
-                      {moveMenuAssetId === asset.id && (
-                        <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1" onClick={(e) => e.stopPropagation()}>
-                          <p className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Move to</p>
-                          <button onClick={() => moveAssetToFolder(asset.id, null)}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
-                            <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    {contextMenuId === `asset-${asset.id}` && (
+                      <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1">
+                        <button onClick={() => downloadAsset(asset)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                          Download
+                        </button>
+                        <button onClick={() => { setContextMenuId(null); setEditingAssetId(asset.id); setEditingAssetName(asset.filename); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                          Rename
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setContextMenuId(null); setMoveMenuAssetId(asset.id); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                          Move to…
+                        </button>
+                        <button onClick={() => { setContextMenuId(null); toggleStarAsset(asset.id); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill={asset.is_starred ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                          {asset.is_starred ? "Unstar" : "Star"}
+                        </button>
+                        <button onClick={() => duplicateAsset(asset.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                          Duplicate
+                        </button>
+                        <div className="my-1 border-t border-gray-100" />
+                        <button onClick={() => { setContextMenuId(null); softDelete(asset.id); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                    {/* Move-to folder picker (opened from context menu) */}
+                    {moveMenuAssetId === asset.id && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1" onClick={(e) => e.stopPropagation()}>
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Move to</p>
+                        <button onClick={() => moveAssetToFolder(asset.id, null)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                          </svg>
+                          Root (no folder)
+                        </button>
+                        {allFolders.map((f) => (
+                          <button key={f.id} onClick={() => moveAssetToFolder(asset.id, f.id)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 truncate">
+                            <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
                             </svg>
-                            Root (no folder)
+                            <span className="truncate">{f.name}</span>
                           </button>
-                          {allFolders.map((f) => (
-                            <button key={f.id} onClick={() => moveAssetToFolder(asset.id, f.id)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 truncate">
-                              <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                              </svg>
-                              <span className="truncate">{f.name}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); softDelete(asset.id); }}
-                      className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" title="Move to trash">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

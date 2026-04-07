@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import mammoth from "mammoth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -35,6 +36,101 @@ function formatDate(s: string | null): string {
   });
 }
 
+// ─── Document renderers ────────────────────────────────────────────────────────
+
+function DocxViewer({ assetId }: { assetId: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setHtml(null); setError(false);
+    fetch(`${API_URL}/api/v1/assets/${assetId}/file`)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => mammoth.convertToHtml({ arrayBuffer: buf }))
+      .then((result) => setHtml(result.value))
+      .catch(() => setError(true));
+  }, [assetId]);
+
+  if (error) return (
+    <div className="flex flex-col items-center gap-3 text-white/60">
+      <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+      <p>Could not render document</p>
+    </div>
+  );
+  if (!html) return (
+    <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+  );
+  return (
+    <div className="w-full h-full overflow-auto bg-white rounded-lg p-8">
+      <div
+        className="max-w-3xl mx-auto prose prose-sm prose-gray"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
+}
+
+function TxtViewer({ assetId }: { assetId: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    setText(null); setError(false);
+    fetch(`${API_URL}/api/v1/assets/${assetId}/file`)
+      .then((r) => r.text())
+      .then(setText)
+      .catch(() => setError(true));
+  }, [assetId]);
+
+  if (error) return <p className="text-white/60">Could not load file</p>;
+  if (!text) return <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />;
+  return (
+    <div className="w-full h-full overflow-auto bg-white rounded-lg">
+      <pre className="p-8 text-sm text-gray-800 font-mono whitespace-pre-wrap break-words leading-relaxed">
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function DocumentViewer({ asset }: { asset: AssetPreview }) {
+  const mime = asset.mime_type ?? "";
+  const isDocx = mime.includes("wordprocessingml") || mime.includes("msword") || mime.includes("opendocument.text");
+  const isPdf = mime === "application/pdf";
+  const isText = mime.startsWith("text/") || mime.includes("markdown");
+
+  if (isDocx) return <DocxViewer assetId={asset.id} />;
+  if (isPdf) return (
+    <iframe
+      src={`${API_URL}/api/v1/assets/${asset.id}/file`}
+      className="w-full h-full rounded-lg bg-white"
+      title={asset.filename}
+    />
+  );
+  if (isText) return <TxtViewer assetId={asset.id} />;
+
+  // Generic fallback
+  return (
+    <div className="flex flex-col items-center gap-4 text-white/60">
+      <svg className="w-20 h-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+      <p className="text-lg">{asset.filename}</p>
+      <a
+        href={`${API_URL}/api/v1/assets/${asset.id}/file`}
+        download={asset.filename}
+        className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm transition-colors"
+      >
+        Download to view
+      </a>
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
+
 interface Props {
   assets: AssetPreview[];
   initialIndex: number;
@@ -62,7 +158,6 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, prev, next]);
 
-  // Fetch detailed info when info panel opens
   useEffect(() => {
     if (!showInfo || !asset) return;
     fetch(`${API_URL}/api/v1/assets/${asset.id}`)
@@ -71,7 +166,6 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
       .catch(() => {});
   }, [showInfo, asset]);
 
-  // Reset index when initialIndex changes
   useEffect(() => { setIndex(initialIndex); }, [initialIndex]);
 
   async function handleDelete() {
@@ -100,6 +194,8 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
 
   const isVideo = asset.file_type === "video";
   const isPhoto = asset.file_type === "photo";
+  const isAudio = asset.file_type === "audio";
+  const isDocument = asset.file_type === "document";
   const hasPrev = index > 0;
   const hasNext = index < assets.length - 1;
 
@@ -161,7 +257,7 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
         )}
 
         {/* Media */}
-        <div className="w-full h-full flex items-center justify-center p-16">
+        <div className={`w-full h-full flex items-center justify-center ${isDocument ? "p-10" : "p-16"}`}>
           {isPhoto && (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
@@ -178,13 +274,22 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
               autoPlay
             />
           )}
-          {!isPhoto && !isVideo && (
-            <div className="flex flex-col items-center gap-4 text-white/60">
-              <svg className="w-20 h-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          {isAudio && (
+            <div className="flex flex-col items-center gap-6 text-white/80">
+              <svg className="w-20 h-20 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
               </svg>
-              <p className="text-lg">{asset.filename}</p>
+              <p className="text-sm text-white/60">{asset.filename}</p>
+              <audio
+                src={`${API_URL}/api/v1/assets/${asset.id}/file`}
+                controls
+                className="w-full max-w-md"
+                autoPlay
+              />
             </div>
+          )}
+          {isDocument && (
+            <DocumentViewer asset={asset} />
           )}
         </div>
 
@@ -230,7 +335,7 @@ export function FullScreenPreview({ assets, initialIndex, onClose, onDelete }: P
           </button>
         </div>
 
-        {/* Info panel — slides up */}
+        {/* Info panel */}
         {showInfo && (
           <div className="mt-4 rounded-xl bg-white/10 backdrop-blur-sm p-4 space-y-3">
             {!detail ? (

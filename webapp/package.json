@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.47.0",
     "@uiw/react-md-editor": "^4.1.0",
+    "mammoth": "^1.12.0",
     "next": "16.2.2",
     "react": "19.2.4",
     "react-data-grid": "^7.0.0-beta.59",

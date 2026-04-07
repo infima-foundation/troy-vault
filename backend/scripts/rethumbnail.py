@@ -17,20 +17,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from PIL import Image, ImageOps
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from models import Asset, FileType
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://troy:troy@localhost:5432/troy_vault")
-THUMB_WIDTH = 400
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./troy.db")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+_engine_kwargs = {}
+if DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
+
+THUMB_WIDTH = 400
 
 
 def regenerate_thumbnail(asset: Asset) -> bool:
-    """Re-generate the thumbnail for a photo asset with EXIF orientation applied.
-    Overwrites the existing thumbnail file. Returns True on success."""
     source_path = Path(asset.file_path)
     if not source_path.exists():
         print(f"  SKIP (source missing): {asset.filename}")
@@ -48,7 +56,6 @@ def regenerate_thumbnail(asset: Asset) -> bool:
         new_height = int(float(img.height) * w_percent)
         img = img.resize((THUMB_WIDTH, new_height), Image.LANCZOS)
 
-        # Use existing thumbnail path if present, otherwise derive it
         if asset.thumbnail_path:
             thumb_path = Path(asset.thumbnail_path)
         else:
@@ -72,23 +79,25 @@ def main() -> None:
 
     with Session(engine) as db:
         assets = db.scalars(
-            select(Asset).where(Asset.file_type == FileType.photo)
+            select(Asset).where(
+                Asset.file_type == FileType.photo,
+                Asset.is_deleted == False,
+            )
         ).all()
 
         total = len(assets)
         print(f"Found {total} photo asset(s). Re-generating thumbnails...\n")
 
         for asset in assets:
+            source_exists = Path(asset.file_path).exists()
             ok = regenerate_thumbnail(asset)
             if ok:
                 print(f"Fixed: {asset.filename}")
                 fixed += 1
+            elif not source_exists:
+                skipped += 1
             else:
-                skipped_or_err = "skipped" if not Path(asset.file_path).exists() else "error"
-                if skipped_or_err == "skipped":
-                    skipped += 1
-                else:
-                    errors += 1
+                errors += 1
 
     print(f"\nDone. Fixed: {fixed}  Skipped: {skipped}  Errors: {errors}")
 

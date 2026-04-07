@@ -219,8 +219,8 @@ function LibraryContent() {
             <div key={g}>
               <div className="h-6 w-32 bg-gray-100 rounded mb-4 animate-pulse" />
               <div className="h-3 w-24 bg-gray-50 rounded mb-3 animate-pulse" />
-              <div className="flex gap-0.5" style={{ height: 200 }}>
-                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="bg-gray-100 animate-pulse rounded" style={{ height: 200, width: 200 * (0.7 + Math.random() * 0.7) }} />)}
+              <div className="flex gap-0.5" style={{ height: 200 }} suppressHydrationWarning>
+                {[200, 260, 180, 240, 190, 220].map((w, i) => <div key={i} className="bg-gray-100 animate-pulse rounded" style={{ height: 200, width: w }} />)}
               </div>
             </div>
           ))}

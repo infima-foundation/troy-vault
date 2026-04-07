@@ -7,6 +7,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
+import sentry_sdk
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN", ""),
+    integrations=[StarletteIntegration(), FastApiIntegration()],
+    traces_sample_rate=1.0,
+)
+
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -373,6 +383,54 @@ def star_asset(asset_id: str, db: Session = Depends(get_db)):
     return {"id": str(asset.id), "is_starred": asset.is_starred}
 
 
+@app.post("/api/v1/assets/{asset_id}/duplicate", status_code=201)
+def duplicate_asset(asset_id: str, db: Session = Depends(get_db)):
+    """Create a copy of an asset with a new file and unique SHA-256."""
+    import hashlib, shutil
+    original = db.get(Asset, _parse_uuid(asset_id))
+    if not original:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    src = Path(original.file_path)
+    if not src.exists():
+        raise HTTPException(status_code=422, detail="Source file not found on disk")
+
+    # Build a copy path: same dir, stem + "_copy[N]"
+    dest = src.parent / f"{src.stem}_copy{src.suffix}"
+    counter = 1
+    while dest.exists():
+        dest = src.parent / f"{src.stem}_copy{counter}{src.suffix}"
+        counter += 1
+
+    shutil.copy2(src, dest)
+
+    new_sha = hashlib.sha256(dest.read_bytes()).hexdigest()
+    new_id = _uuid.uuid4()
+    stem_name = src.stem
+    copy_filename = f"{stem_name}_copy{src.suffix}"
+
+    new_asset = Asset(
+        id=new_id,
+        filename=copy_filename,
+        file_type=original.file_type,
+        mime_type=original.mime_type,
+        sha256_hash=new_sha,
+        file_path=str(dest),
+        thumbnail_path=original.thumbnail_path,
+        size_bytes=dest.stat().st_size,
+        captured_at=original.captured_at,
+        camera_make=original.camera_make,
+        camera_model=original.camera_model,
+        lat=original.lat,
+        lon=original.lon,
+        metadata_json=original.metadata_json,
+        folder_id=original.folder_id,
+    )
+    db.add(new_asset)
+    db.commit()
+    return _asset_summary(new_asset)
+
+
 # ---------------------------------------------------------------------------
 # Create document/spreadsheet/presentation asset
 # ---------------------------------------------------------------------------
@@ -468,7 +526,9 @@ def list_folders(
     db: Session = Depends(get_db),
 ):
     stmt = select(Folder)
-    if parent_id == "root" or parent_id is None:
+    if parent_id == "all":
+        pass  # return all folders regardless of nesting
+    elif parent_id == "root" or parent_id is None:
         stmt = stmt.where(Folder.parent_id == None)
     else:
         try:
