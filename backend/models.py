@@ -59,8 +59,12 @@ class Asset(Base):
     # Star/favourite
     is_starred = Column(Boolean, nullable=False, default=False)
 
+    # Folder organisation
+    folder_id = Column(Uuid(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
+
     tags = relationship("Tag", back_populates="asset", cascade="all, delete-orphan")
     faces = relationship("Face", back_populates="asset", cascade="all, delete-orphan")
+    folder = relationship("Folder", back_populates="assets", foreign_keys=[folder_id])
 
     __table_args__ = (
         Index("ix_assets_file_type", "file_type"),
@@ -68,6 +72,23 @@ class Asset(Base):
         Index("ix_assets_ingested_at", "ingested_at"),
         Index("ix_assets_is_deleted", "is_deleted"),
     )
+
+
+class Folder(Base):
+    __tablename__ = "folders"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(512), nullable=False)
+    parent_id = Column(Uuid(as_uuid=True), ForeignKey("folders.id", ondelete="CASCADE"), nullable=True)
+    is_starred = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    children = relationship("Folder", back_populates="parent", cascade="all, delete-orphan")
+    parent = relationship("Folder", back_populates="children", remote_side="Folder.id")
+    assets = relationship("Asset", back_populates="folder", foreign_keys="Asset.folder_id")
+
+    __table_args__ = (Index("ix_folders_parent_id", "parent_id"),)
 
 
 class Tag(Base):

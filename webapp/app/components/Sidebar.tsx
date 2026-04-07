@@ -115,7 +115,6 @@ export function Sidebar() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [userName, setUserName] = useState("");
   const [driveOpen, setDriveOpen] = useState(true);
-  const [photosOpen, setPhotosOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -274,40 +273,11 @@ export function Sidebar() {
                   All Files
                 </Link>
 
-                {/* Photos & Videos with sub-chevron */}
-                <div>
-                  <div className={`flex items-center rounded-md transition-colors ${isActive("/library") ? "bg-gray-100" : "hover:bg-gray-50"}`}>
-                    <Link href="/library" className="flex items-center gap-2 px-3 py-1.5 flex-1 text-xs text-gray-500 hover:text-gray-700 transition-colors">
-                      <Icons.Photo />
-                      <span className={isActive("/library") ? "text-gray-700 font-medium" : ""}>Photos &amp; Videos</span>
-                    </Link>
-                    <button
-                      onClick={() => setPhotosOpen((v) => !v)}
-                      className="px-2 py-1.5 text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      {photosOpen ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
-                    </button>
-                  </div>
-
-                  {photosOpen && (
-                    <div className="ml-5 mt-0.5 space-y-0.5">
-                      <Link href="/library" className="block px-3 py-1 rounded-md text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors">
-                        All
-                      </Link>
-                      <span className="flex items-center justify-between px-3 py-1 rounded-md text-xs text-gray-300 cursor-default select-none">
-                        Places
-                        <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-300">Soon</span>
-                      </span>
-                      <span className="flex items-center justify-between px-3 py-1 rounded-md text-xs text-gray-300 cursor-default select-none">
-                        Faces
-                        <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-300">Soon</span>
-                      </span>
-                      <Link href="/library?view=years" className="block px-3 py-1 rounded-md text-xs text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors">
-                        Years
-                      </Link>
-                    </div>
-                  )}
-                </div>
+                {/* Photos & Videos — single link, no sub-items */}
+                <Link href="/library" className={subLink(isActive("/library"))}>
+                  <Icons.Photo />
+                  Photos &amp; Videos
+                </Link>
 
                 {/* Folders */}
                 <Link href="/drive/folders" className={subLink(isActive("/drive/folders"))}>

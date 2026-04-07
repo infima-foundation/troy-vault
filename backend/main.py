@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, select, func, or_, text
 from sqlalchemy.orm import Session
 import uvicorn
 
-from models import Base, Asset, FileType
+from models import Base, Asset, FileType, Folder
 from ingestion.router import route_file
 from chat import router as chat_router
 
@@ -35,6 +35,7 @@ _MIGRATIONS = [
     "ALTER TABLE assets ADD COLUMN deleted_at DATETIME",
     "ALTER TABLE assets ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
     "ALTER TABLE conversations ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE assets ADD COLUMN folder_id VARCHAR(36)",
 ]
 
 
@@ -109,6 +110,7 @@ def list_assets(
     date_to: str | None = Query(None),
     tags: str | None = Query(None),
     deleted: bool = Query(False, description="If true, return only soft-deleted assets"),
+    folder_id: str | None = Query(None, description="Filter by folder; 'root' for top-level only"),
     db: Session = Depends(get_db),
 ):
     stmt = select(Asset)
@@ -117,6 +119,15 @@ def list_assets(
         stmt = stmt.where(Asset.is_deleted == True)
     else:
         stmt = stmt.where(Asset.is_deleted == False)
+
+    if folder_id == "root":
+        stmt = stmt.where(Asset.folder_id == None)
+    elif folder_id:
+        try:
+            fid = _uuid.UUID(folder_id)
+            stmt = stmt.where(Asset.folder_id == fid)
+        except ValueError:
+            pass
 
     if file_type:
         stmt = stmt.where(Asset.file_type == file_type)
@@ -324,6 +335,31 @@ def rename_asset(asset_id: str, req: FilenameUpdateRequest, db: Session = Depend
 
 
 # ---------------------------------------------------------------------------
+# Move asset to folder
+# ---------------------------------------------------------------------------
+
+class MoveFolderRequest(BaseModel):
+    folder_id: str | None = None  # None = move to root
+
+
+@app.patch("/api/v1/assets/{asset_id}/folder")
+def move_asset_to_folder(asset_id: str, req: MoveFolderRequest, db: Session = Depends(get_db)):
+    asset = db.get(Asset, _parse_uuid(asset_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if req.folder_id:
+        fid = _parse_uuid(req.folder_id)
+        folder = db.get(Folder, fid)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        asset.folder_id = fid
+    else:
+        asset.folder_id = None
+    db.commit()
+    return _asset_summary(asset)
+
+
+# ---------------------------------------------------------------------------
 # Star / unstar asset
 # ---------------------------------------------------------------------------
 
@@ -398,6 +434,114 @@ def create_document(req: CreateDocumentRequest, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Folders
+# ---------------------------------------------------------------------------
+
+class CreateFolderRequest(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+
+class PatchFolderRequest(BaseModel):
+    name: str | None = None
+    is_starred: bool | None = None
+    parent_id: str | None = None
+
+
+@app.post("/api/v1/folders", status_code=201)
+def create_folder(req: CreateFolderRequest, db: Session = Depends(get_db)):
+    parent = None
+    if req.parent_id:
+        parent = db.get(Folder, _parse_uuid(req.parent_id))
+        if not parent:
+            raise HTTPException(404, "Parent folder not found")
+    folder = Folder(name=req.name.strip(), parent_id=parent.id if parent else None)
+    db.add(folder)
+    db.commit()
+    db.refresh(folder)
+    return _folder_out(folder)
+
+
+@app.get("/api/v1/folders")
+def list_folders(
+    parent_id: str | None = Query(None, description="'root' for top-level, or a UUID"),
+    db: Session = Depends(get_db),
+):
+    stmt = select(Folder)
+    if parent_id == "root" or parent_id is None:
+        stmt = stmt.where(Folder.parent_id == None)
+    else:
+        try:
+            pid = _uuid.UUID(parent_id)
+            stmt = stmt.where(Folder.parent_id == pid)
+        except ValueError:
+            stmt = stmt.where(Folder.parent_id == None)
+    folders = db.scalars(stmt.order_by(Folder.name)).all()
+    return [_folder_out(f) for f in folders]
+
+
+@app.get("/api/v1/folders/{folder_id}")
+def get_folder(folder_id: str, db: Session = Depends(get_db)):
+    folder = db.get(Folder, _parse_uuid(folder_id))
+    if not folder:
+        raise HTTPException(404, "Folder not found")
+    return _folder_out(folder)
+
+
+@app.patch("/api/v1/folders/{folder_id}")
+def patch_folder(folder_id: str, req: PatchFolderRequest, db: Session = Depends(get_db)):
+    folder = db.get(Folder, _parse_uuid(folder_id))
+    if not folder:
+        raise HTTPException(404, "Folder not found")
+    if req.name is not None:
+        folder.name = req.name.strip()
+    if req.is_starred is not None:
+        folder.is_starred = req.is_starred
+    if req.parent_id is not None:
+        folder.parent_id = _parse_uuid(req.parent_id)
+    from datetime import datetime as _dt
+    folder.updated_at = _dt.utcnow()
+    db.commit()
+    db.refresh(folder)
+    return _folder_out(folder)
+
+
+@app.delete("/api/v1/folders/{folder_id}", status_code=200)
+def delete_folder(folder_id: str, db: Session = Depends(get_db)):
+    folder = db.get(Folder, _parse_uuid(folder_id))
+    if not folder:
+        raise HTTPException(404, "Folder not found")
+    # Unset folder_id on assets in this folder
+    for asset in folder.assets:
+        asset.folder_id = None
+    db.delete(folder)
+    db.commit()
+    return {"id": folder_id, "deleted": True}
+
+
+@app.patch("/api/v1/folders/{folder_id}/star")
+def star_folder(folder_id: str, db: Session = Depends(get_db)):
+    folder = db.get(Folder, _parse_uuid(folder_id))
+    if not folder:
+        raise HTTPException(404, "Folder not found")
+    folder.is_starred = not folder.is_starred
+    db.commit()
+    return _folder_out(folder)
+
+
+def _folder_out(f: Folder) -> dict:
+    return {
+        "id": str(f.id),
+        "name": f.name,
+        "parent_id": str(f.parent_id) if f.parent_id else None,
+        "is_starred": f.is_starred,
+        "asset_count": len(f.assets),
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -417,6 +561,7 @@ def _asset_summary(asset: Asset) -> dict:
         "is_deleted": asset.is_deleted,
         "deleted_at": asset.deleted_at.isoformat() if asset.deleted_at else None,
         "is_starred": asset.is_starred,
+        "folder_id": str(asset.folder_id) if asset.folder_id else None,
     }
 
 

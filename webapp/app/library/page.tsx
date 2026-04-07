@@ -16,28 +16,109 @@ interface AssetSummary {
   ingested_at: string; thumbnail_path: string | null; lat: number | null; lon: number | null;
 }
 
-function sortByDate(a: AssetSummary, b: AssetSummary): number {
-  return new Date(b.captured_at ?? b.ingested_at).getTime() - new Date(a.captured_at ?? a.ingested_at).getTime();
+function effectiveDate(a: AssetSummary): Date {
+  return new Date(a.captured_at ?? a.ingested_at);
 }
 
-function groupByMonth(assets: AssetSummary[]): [string, AssetSummary[]][] {
-  const map = new Map<string, AssetSummary[]>();
+function sortByDate(a: AssetSummary, b: AssetSummary): number {
+  return effectiveDate(b).getTime() - effectiveDate(a).getTime();
+}
+
+// Group into: Map<"YYYY-MM" (month key), Map<"YYYY-MM-DD" (day key), assets[]>>
+function groupByMonthThenDay(assets: AssetSummary[]): [string, [string, AssetSummary[]][]][] {
+  const monthMap = new Map<string, Map<string, AssetSummary[]>>();
+
   for (const a of assets) {
-    const d = new Date(a.captured_at ?? a.ingested_at);
-    const k = d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-    map.set(k, [...(map.get(k) ?? []), a]);
+    const d = effectiveDate(a);
+    const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const dKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    if (!monthMap.has(mKey)) monthMap.set(mKey, new Map());
+    const dayMap = monthMap.get(mKey)!;
+    if (!dayMap.has(dKey)) dayMap.set(dKey, []);
+    dayMap.get(dKey)!.push(a);
   }
-  return Array.from(map.entries());
+
+  // Sort months descending, days descending within each month
+  return Array.from(monthMap.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([mKey, dayMap]) => [
+      mKey,
+      Array.from(dayMap.entries())
+        .sort((a, b) => b[0].localeCompare(a[0])),
+    ]);
 }
 
 function groupByYear(assets: AssetSummary[]): [string, AssetSummary[]][] {
   const map = new Map<string, AssetSummary[]>();
   for (const a of assets) {
-    const d = new Date(a.captured_at ?? a.ingested_at);
-    const k = d.getFullYear().toString();
+    const k = effectiveDate(a).getFullYear().toString();
     map.set(k, [...(map.get(k) ?? []), a]);
   }
   return Array.from(map.entries()).sort((a, b) => parseInt(b[0]) - parseInt(a[0]));
+}
+
+function formatMonthHeader(mKey: string): string {
+  // mKey = "YYYY-MM"
+  const [year, month] = mKey.split("-");
+  return new Date(parseInt(year), parseInt(month) - 1, 1)
+    .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function formatDayLabel(dKey: string): string {
+  // dKey = "YYYY-MM-DD"
+  const [y, m, d] = dKey.split("-").map(Number);
+  return new Date(y, m - 1, d)
+    .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+}
+
+const PHOTO_ROW_HEIGHT = 200; // px
+
+function PhotoRow({
+  assets,
+  onOpen,
+}: {
+  assets: AssetSummary[];
+  onOpen: (a: AssetSummary) => void;
+}) {
+  return (
+    <div
+      className="flex gap-0.5 overflow-hidden rounded-sm"
+      style={{ height: PHOTO_ROW_HEIGHT }}
+    >
+      {assets.map((a) => (
+        <button
+          key={a.id}
+          onClick={() => onOpen(a)}
+          className="relative shrink-0 overflow-hidden group focus:outline-none"
+          style={{ height: PHOTO_ROW_HEIGHT }}
+        >
+          {a.file_type === "photo" ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={`${API_URL}/api/v1/assets/${a.id}/thumbnail`}
+              alt={a.filename}
+              style={{ height: PHOTO_ROW_HEIGHT, width: "auto", display: "block" }}
+              loading="lazy"
+              className="transition-transform duration-200 group-hover:scale-[1.03]"
+            />
+          ) : (
+            <div
+              style={{ height: PHOTO_ROW_HEIGHT, width: PHOTO_ROW_HEIGHT * 1.33 }}
+              className="flex items-center justify-center bg-gray-200"
+            >
+              <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center">
+                <svg className="w-5 h-5 text-gray-500 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors duration-150" />
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function LibraryContent() {
@@ -73,10 +154,7 @@ function LibraryContent() {
     const onEnter = (e: DragEvent) => { if (!e.dataTransfer?.types.includes("Files")) return; dragRef.current++; setDragging(true); };
     const onLeave = (e: DragEvent) => { if (e.relatedTarget !== null) return; dragRef.current = 0; setDragging(false); };
     const onOver = (e: DragEvent) => e.preventDefault();
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault(); dragRef.current = 0; setDragging(false);
-      if (e.dataTransfer?.files.length) openUpload("media");
-    };
+    const onDrop = (e: DragEvent) => { e.preventDefault(); dragRef.current = 0; setDragging(false); if (e.dataTransfer?.files.length) openUpload("media"); };
     document.addEventListener("dragenter", onEnter); document.addEventListener("dragleave", onLeave);
     document.addEventListener("dragover", onOver); document.addEventListener("drop", onDrop);
     return () => {
@@ -93,14 +171,14 @@ function LibraryContent() {
     if (idx >= 0) setPreviewIndex(idx);
   }
 
-  const monthGroups = groupByMonth(filtered);
+  const monthDayGroups = groupByMonthThenDay(filtered);
   const yearGroups = groupByYear(filtered);
 
   return (
     <div className="min-h-full bg-white">
       {/* Top bar */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-100 px-8 py-4 flex items-center gap-4">
-        <h1 className="text-base font-semibold text-gray-900 mr-2">Photos &amp; Videos</h1>
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-100 px-8 py-3 flex items-center gap-3">
+        <h1 className="text-base font-semibold text-gray-900 mr-1">Photos &amp; Videos</h1>
 
         {/* Filter pills */}
         <div className="flex items-center gap-1.5">
@@ -113,18 +191,19 @@ function LibraryContent() {
         </div>
 
         {/* Nav tabs */}
-        <div className="flex items-center gap-1 ml-2 border-l border-gray-200 pl-4">
+        <div className="flex items-center gap-0.5 ml-1 border-l border-gray-200 pl-3">
           {(["all", "years", "places", "faces"] as NavTab[]).map((tab) => {
             const soon = tab === "places" || tab === "faces";
             return (
-              <button key={tab} onClick={() => { if (!soon) setNavTab(tab); }}
+              <button key={tab}
+                onClick={() => { if (!soon) setNavTab(tab); }}
                 disabled={soon}
-                title={soon ? "Coming soon" : undefined}
-                className={`px-2.5 py-1 rounded-lg text-xs transition-colors capitalize ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors capitalize ${
                   soon ? "text-gray-300 cursor-default" :
-                  navTab === tab ? "bg-gray-100 text-gray-700 font-medium" : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                  navTab === tab ? "bg-gray-100 text-gray-700 font-medium" :
+                  "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
                 }`}>
-                {tab}{soon && <span className="ml-1 text-[9px] font-medium text-gray-300">Soon</span>}
+                {tab}{soon && <span className="ml-1 text-[9px] text-gray-300">Soon</span>}
               </button>
             );
           })}
@@ -135,12 +214,13 @@ function LibraryContent() {
 
       {/* Content */}
       {loading ? (
-        <div className="px-8 py-8 space-y-8">
+        <div className="px-8 py-8 space-y-10">
           {[1, 2].map((g) => (
             <div key={g}>
-              <div className="h-4 w-28 bg-gray-100 rounded mb-4 animate-pulse" />
-              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-9 gap-1">
-                {Array.from({ length: 18 }).map((_, i) => <div key={i} className="aspect-square bg-gray-100 rounded animate-pulse" />)}
+              <div className="h-6 w-32 bg-gray-100 rounded mb-4 animate-pulse" />
+              <div className="h-3 w-24 bg-gray-50 rounded mb-3 animate-pulse" />
+              <div className="flex gap-0.5" style={{ height: 200 }}>
+                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="bg-gray-100 animate-pulse rounded" style={{ height: 200, width: 200 * (0.7 + Math.random() * 0.7) }} />)}
               </div>
             </div>
           ))}
@@ -154,35 +234,31 @@ function LibraryContent() {
           </div>
           <p className="text-gray-600 font-medium mb-1">No media yet</p>
           <p className="text-sm text-gray-400 mb-5">Upload photos and videos to see them here</p>
-          <button
-            onClick={() => openUpload("media")}
-            className="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm hover:bg-gray-700 transition-colors"
-          >
+          <button onClick={() => openUpload("media")}
+            className="px-4 py-2 rounded-xl bg-gray-900 text-white text-sm hover:bg-gray-700 transition-colors">
             Upload files
           </button>
         </div>
       ) : navTab === "years" ? (
-        /* Years view */
+        /* ── Years view ── */
         <div className="px-8 py-6 space-y-12">
           {yearGroups.map(([year, group]) => (
             <section key={year}>
-              <h2 className="text-4xl font-bold text-gray-200 mb-4 select-none">{year}</h2>
-              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-9 gap-1">
+              <h2 className="text-5xl font-bold text-gray-100 mb-4 select-none leading-none">{year}</h2>
+              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-9 gap-0.5">
                 {group.map((a) => (
                   <button key={a.id} onClick={() => openPreview(a)}
-                    className="relative aspect-square overflow-hidden rounded-lg bg-gray-100 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400">
+                    className="relative aspect-square overflow-hidden rounded-sm bg-gray-100 group focus:outline-none">
                     {a.file_type === "photo" ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img src={`${API_URL}/api/v1/assets/${a.id}/thumbnail`} alt={a.filename}
                         className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" loading="lazy" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center bg-gray-200">
-                        <div className="w-7 h-7 rounded-full bg-gray-300 flex items-center justify-center">
-                          <svg className="w-3.5 h-3.5 text-gray-500 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                        </div>
+                        <svg className="w-4 h-4 text-gray-400 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-150" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors" />
                   </button>
                 ))}
               </div>
@@ -203,38 +279,34 @@ function LibraryContent() {
               </svg>
             )}
           </div>
-          <p className="text-gray-600 font-semibold text-lg mb-1">
-            {navTab === "places" ? "Places" : "Faces"}
-          </p>
+          <p className="text-gray-600 font-semibold text-lg mb-1">{navTab === "places" ? "Places" : "Faces"}</p>
           <p className="text-sm text-gray-400 max-w-sm">
             {navTab === "places"
-              ? "GPS-based photo grouping is coming soon. Photos with location data will be organized by where they were taken."
-              : "On-device face clustering is coming soon. InsightFace will group photos by the people in them."}
+              ? "GPS-based photo grouping is coming soon."
+              : "On-device face clustering is coming soon."}
           </p>
         </div>
       ) : (
-        /* All / grid view grouped by month */
-        <div className="px-8 py-6 space-y-10">
-          {monthGroups.map(([month, group]) => (
-            <section key={month}>
-              <h2 className="text-sm font-semibold text-gray-500 mb-3 sticky top-[65px] bg-white py-1 z-10">{month}</h2>
-              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-9 gap-1">
-                {group.map((a) => (
-                  <button key={a.id} onClick={() => openPreview(a)}
-                    className="relative aspect-square overflow-hidden rounded-lg bg-gray-100 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400">
-                    {a.file_type === "photo" ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={`${API_URL}/api/v1/assets/${a.id}/thumbnail`} alt={a.filename}
-                        className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" loading="lazy" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gray-200">
-                        <div className="w-7 h-7 rounded-full bg-gray-300 flex items-center justify-center">
-                          <svg className="w-3.5 h-3.5 text-gray-500 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                        </div>
-                      </div>
-                    )}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-150" />
-                  </button>
+        /* ── Google Photos style: month + day grouping ── */
+        <div className="px-8 pb-16 pt-4 space-y-10">
+          {monthDayGroups.map(([mKey, dayGroups]) => (
+            <section key={mKey}>
+              {/* Month header */}
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">
+                {formatMonthHeader(mKey)}
+              </h2>
+
+              {/* Day groups within month */}
+              <div className="space-y-5">
+                {dayGroups.map(([dKey, dayAssets]) => (
+                  <div key={dKey}>
+                    {/* Sticky day label */}
+                    <p className="sticky top-[57px] z-10 bg-white/95 backdrop-blur-sm text-sm font-medium text-gray-600 py-1.5 mb-1.5">
+                      {formatDayLabel(dKey)}
+                    </p>
+                    {/* Horizontal photo row — variable widths at fixed height */}
+                    <PhotoRow assets={dayAssets} onOpen={openPreview} />
+                  </div>
                 ))}
               </div>
             </section>
@@ -252,27 +324,20 @@ function LibraryContent() {
         </div>
       )}
 
-      {/* Upload button */}
-      <button
-        onClick={() => openUpload("media")}
-        title="Upload"
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gray-900 text-white shadow-lg hover:bg-gray-700 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
-      >
+      {/* Upload FAB */}
+      <button onClick={() => openUpload("media")} title="Upload"
+        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-gray-900 text-white shadow-lg hover:bg-gray-700 hover:scale-105 active:scale-95 transition-all flex items-center justify-center">
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
         </svg>
       </button>
 
-      {/* Full screen preview */}
       {previewIndex !== null && (
         <FullScreenPreview
           assets={previewableAssets}
           initialIndex={previewIndex}
           onClose={() => setPreviewIndex(null)}
-          onDelete={(id) => {
-            setAssets((prev) => prev.filter((a) => a.id !== id));
-            setPreviewIndex(null);
-          }}
+          onDelete={(id) => { setAssets((prev) => prev.filter((a) => a.id !== id)); setPreviewIndex(null); }}
         />
       )}
     </div>

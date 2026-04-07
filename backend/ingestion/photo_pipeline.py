@@ -108,7 +108,9 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
 
 def _generate_thumbnail(data: bytes, source_path: Path) -> Path | None:
     try:
+        from PIL import ImageOps
         img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
 
         w_percent = THUMB_WIDTH / float(img.width)
