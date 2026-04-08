@@ -62,6 +62,9 @@ class Asset(Base):
     # Folder organisation
     folder_id = Column(Uuid(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
 
+    # Owner
+    user_id = Column(String(256), nullable=True, index=True)
+
     tags = relationship("Tag", back_populates="asset", cascade="all, delete-orphan")
     faces = relationship("Face", back_populates="asset", cascade="all, delete-orphan")
     folder = relationship("Folder", back_populates="assets", foreign_keys=[folder_id])
@@ -83,6 +86,7 @@ class Folder(Base):
     is_starred = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    user_id = Column(String(256), nullable=True, index=True)
 
     children = relationship("Folder", back_populates="parent", cascade="all, delete-orphan")
     parent = relationship("Folder", back_populates="children", remote_side="Folder.id")
@@ -125,6 +129,7 @@ class Conversation(Base):
     is_starred = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    user_id = Column(String(256), nullable=True, index=True)
 
     messages = relationship(
         "Message", back_populates="conversation",
