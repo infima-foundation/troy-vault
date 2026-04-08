@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useUpload } from "./UploadProvider";
+import { UserButton } from '@clerk/nextjs';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const PROFILE_KEY = "troy_profile";
@@ -364,20 +365,15 @@ export function Sidebar() {
 
       {/* Bottom: user avatar */}
       <div className="border-t border-gray-100 p-3 shrink-0">
-        <Link
-          href="/profile"
-          className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-gray-50 transition-colors group"
-        >
-          <div className="w-8 h-8 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
-            <span className="text-xs font-semibold text-white">{initials(userName)}</span>
-          </div>
+        <div className="flex items-center gap-3 px-2 py-2">
+          <UserButton afterSignOutUrl="/sign-in" />
           {!collapsed && (
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-800 truncate">{userName || "Your profile"}</p>
-              <p className="text-xs text-gray-400 group-hover:text-gray-500 transition-colors">Profile &amp; Settings</p>
+              <p className="text-xs text-gray-400">Profile &amp; Settings</p>
             </div>
           )}
-        </Link>
+        </div>
       </div>
     </aside>
   );
