@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.0.12",
     "@sentry/nextjs": "^10.47.0",
+    "@supabase/supabase-js": "^2.102.1",
     "@uiw/react-md-editor": "^4.1.0",
     "mammoth": "^1.12.0",
     "next": "16.2.2",
