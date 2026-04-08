@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ClerkProvider } from '@clerk/nextjs'
 import { Sidebar } from "./components/Sidebar";
 import { UploadProvider } from "./components/UploadProvider";
 import { SentryErrorBoundary } from "./components/SentryErrorBoundary";
@@ -26,15 +27,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <body className="h-full flex bg-gray-50 text-gray-900 antialiased">
-        <SentryErrorBoundary>
-          <UploadProvider>
-            <Sidebar />
-            <main className="flex-1 overflow-y-auto min-w-0">{children}</main>
-          </UploadProvider>
-        </SentryErrorBoundary>
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
+        <body className="h-full flex bg-gray-50 text-gray-900 antialiased">
+          <SentryErrorBoundary>
+            <UploadProvider>
+              <Sidebar />
+              <main className="flex-1 overflow-y-auto min-w-0">{children}</main>
+            </UploadProvider>
+          </SentryErrorBoundary>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
