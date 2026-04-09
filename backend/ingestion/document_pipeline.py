@@ -1,14 +1,17 @@
 """
 Document ingestion pipeline.
 
-Steps:
+Fast path (in-request):
   1. Dedup (SHA-256)
   2. Save to ./data/media/documents/YYYY/MM/<filename>
-  3. Extract text (pypdf for PDF, python-docx for DOCX, pytesseract for images)
-  4. Chunk text (512-char windows, 64-char stride)
-  5. Embed chunks into ChromaDB
-  6. Write Asset row to DB
-  7. Return asset_id (UUID)
+  3. Write minimal Asset row to DB
+  4. Return asset_id immediately
+
+Background (after response):
+  5. Extract text (pypdf / python-docx / pytesseract)
+  6. Chunk + embed into ChromaDB
+  7. Update Asset.metadata_json with text_length + summary
+  8. LLM tagging via Ollama
 """
 
 import io
@@ -18,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import aiofiles
+from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 try:
@@ -67,12 +71,19 @@ def _get_chroma_collection():
     return _chroma_client.get_or_create_collection("documents")
 
 
-async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.UUID:
+async def run(
+    filename: str,
+    data: bytes,
+    mime_type: str,
+    db: Session,
+    background_tasks: BackgroundTasks,
+    engine,
+) -> uuid.UUID:
     """
-    Full async document pipeline. Returns the asset UUID.
+    Fast path: dedup, save file, write minimal DB row, return asset_id.
+    Schedules text extraction/embedding/tagging as a background task.
     """
     sha256 = sha256_of_bytes(data)
-
     existing = find_duplicate(sha256, db)
     if existing:
         return existing.id
@@ -90,12 +101,6 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
     async with aiofiles.open(dest_path, "wb") as f:
         await f.write(data)
 
-    text = _extract_text(data, filename, mime_type)
-    if text:
-        _embed_and_store(text, str(dest_path), filename)
-
-    summary = text[:500].strip() if text else ""
-
     asset_id = uuid.uuid4()
     asset = Asset(
         id=asset_id,
@@ -105,19 +110,46 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
         sha256_hash=sha256,
         file_path=str(dest_path),
         size_bytes=len(data),
-        metadata_json={
-            "text_length": len(text) if text else 0,
-            "summary": summary,
-        },
     )
     db.add(asset)
     db.commit()
 
-    # LLM tagging — pass up to 2000 chars of extracted text
-    if text:
-        await tag_asset(asset_id, "document", text[:2000], db)
-
+    background_tasks.add_task(
+        _post_process_document, asset_id, data, filename, mime_type, str(dest_path), engine
+    )
     return asset_id
+
+
+async def _post_process_document(
+    asset_id: uuid.UUID,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    file_path: str,
+    engine,
+) -> None:
+    """
+    Runs after the HTTP response is sent.
+    Creates its own DB session — the request session is already closed.
+    """
+    text = _extract_text(data, filename, mime_type)
+    if text:
+        _embed_and_store(text, file_path, filename)
+
+    summary = text[:500].strip() if text else ""
+
+    with Session(engine) as db:
+        asset = db.get(Asset, asset_id)
+        if asset:
+            asset.metadata_json = {
+                "text_length": len(text) if text else 0,
+                "summary": summary,
+            }
+            db.commit()
+
+    if text:
+        with Session(engine) as db:
+            await tag_asset(asset_id, "document", text[:2000], db)
 
 
 def _extract_text(data: bytes, filename: str, mime_type: str) -> str:
@@ -142,7 +174,6 @@ def _extract_text(data: bytes, filename: str, mime_type: str) -> str:
 
 def _extract_pdf(data: bytes) -> str:
     from pypdf import PdfReader
-
     reader = PdfReader(io.BytesIO(data))
     parts = []
     for page in reader.pages:
@@ -190,7 +221,7 @@ def _embed_and_store(text: str, file_path: str, filename: str) -> None:
     collection = _get_chroma_collection()
 
     if embedder is None or collection is None:
-        return  # chromadb / sentence-transformers not installed; skip vector storage
+        return
 
     embeddings = embedder.encode(chunks, show_progress_bar=False).tolist()
     ids = [f"{file_path}::chunk::{i}" for i in range(len(chunks))]
