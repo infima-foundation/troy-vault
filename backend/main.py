@@ -1,5 +1,10 @@
-import logging
-import os
+import os, sys, logging
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
+logger = logging.getLogger(__name__)
+logger.info(f"Python {sys.version}")
+logger.info(f"PORT={os.environ.get('PORT', 'NOT SET')}")
+logger.info(f"DATABASE_URL={'SET' if os.environ.get('DATABASE_URL') else 'NOT SET'}")
+
 import uuid as _uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -8,8 +13,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 logger.info("Starting TROY Vault backend...")
 
 import sentry_sdk
