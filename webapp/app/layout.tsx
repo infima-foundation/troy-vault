@@ -27,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider afterSignOutUrl="/sign-in">
       <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
         <body className="h-full flex bg-gray-50 text-gray-900 antialiased">
           <SentryErrorBoundary>

@@ -473,7 +473,8 @@ function ChatContent() {
           )}
           {unpinned.map((c) => (
             <ConvRow key={c.id} conv={c} active={c.id === activeConvId}
-              onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)} />
+              onClick={() => setActiveConvId(c.id)} onPin={() => togglePin(c)} onDelete={() => deleteConversation(c.id)}
+              onStar={() => starConversation(c)} onRename={(t) => renameConversation(c, t)} />
           ))}
         </div>
       </div>
