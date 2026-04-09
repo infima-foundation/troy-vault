@@ -25,9 +25,11 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Header, Query, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, select, func, or_, text
 from sqlalchemy.orm import Session
@@ -80,18 +82,54 @@ app = FastAPI(title="troy-vault", version="0.1.0", lifespan=lifespan)
 
 app.include_router(chat_router)
 
+ALLOWED_ORIGINS = [
+    "https://troy-vault-2n3c.vercel.app",
+    "https://troy-vault-production.up.railway.app",
+    "http://localhost:3000",
+    "http://localhost:8000",
+]
+
+if os.getenv("FRONTEND_URL"):
+    ALLOWED_ORIGINS.append(os.getenv("FRONTEND_URL"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-User-ID"],
+    max_age=3600,
 )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "img-src 'self' data: blob:; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline';"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 def get_db():
     with Session(engine) as session:
         yield session
+
+
+async def get_current_user(x_user_id: str = Header(None)):
+    """Extract user ID from X-User-ID request header. Returns None if not present."""
+    return x_user_id
 
 
 def _parse_uuid(asset_id: str) -> _uuid.UUID:
@@ -119,6 +157,7 @@ async def ingest(
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
+    current_user: str | None = Depends(get_current_user),
 ):
     asset_id = await route_file(file, db, background_tasks, engine)
     return {"asset_id": str(asset_id), "filename": file.filename}
@@ -140,6 +179,7 @@ def list_assets(
     folder_id: str | None = Query(None, description="Filter by folder; 'root' for top-level only"),
     user_id: str | None = Query(None, description="Filter by owner user ID"),
     db: Session = Depends(get_db),
+    current_user: str | None = Depends(get_current_user),
 ):
     stmt = select(Asset)
 
@@ -148,8 +188,10 @@ def list_assets(
     else:
         stmt = stmt.where(Asset.is_deleted == False)
 
-    if user_id:
-        stmt = stmt.where(Asset.user_id == user_id)
+    # Header-based user takes precedence over query param
+    effective_user_id = current_user or user_id
+    if effective_user_id:
+        stmt = stmt.where(Asset.user_id == effective_user_id)
 
     if folder_id == "root":
         stmt = stmt.where(Asset.folder_id == None)
@@ -550,6 +592,7 @@ def list_folders(
     parent_id: str | None = Query(None, description="'root' for top-level, or a UUID"),
     user_id: str | None = Query(None, description="Filter by owner user ID"),
     db: Session = Depends(get_db),
+    current_user: str | None = Depends(get_current_user),
 ):
     stmt = select(Folder)
     if parent_id == "all":
@@ -562,8 +605,9 @@ def list_folders(
             stmt = stmt.where(Folder.parent_id == pid)
         except ValueError:
             stmt = stmt.where(Folder.parent_id == None)
-    if user_id:
-        stmt = stmt.where(Folder.user_id == user_id)
+    effective_user_id = current_user or user_id
+    if effective_user_id:
+        stmt = stmt.where(Folder.user_id == effective_user_id)
     folders = db.scalars(stmt.order_by(Folder.name)).all()
     return [_folder_out(f) for f in folders]
 
