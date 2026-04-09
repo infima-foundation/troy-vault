@@ -188,8 +188,8 @@ def list_assets(
     else:
         stmt = stmt.where(Asset.is_deleted == False)
 
-    # Header-based user takes precedence over query param
-    effective_user_id = current_user or user_id
+    # Header takes precedence; fall back to query param only when header absent
+    effective_user_id = current_user if current_user is not None else user_id
     if effective_user_id:
         stmt = stmt.where(Asset.user_id == effective_user_id)
 
@@ -605,7 +605,7 @@ def list_folders(
             stmt = stmt.where(Folder.parent_id == pid)
         except ValueError:
             stmt = stmt.where(Folder.parent_id == None)
-    effective_user_id = current_user or user_id
+    effective_user_id = current_user if current_user is not None else user_id
     if effective_user_id:
         stmt = stmt.where(Folder.user_id == effective_user_id)
     folders = db.scalars(stmt.order_by(Folder.name)).all()
