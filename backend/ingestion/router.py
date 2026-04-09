@@ -151,7 +151,12 @@ _DOCUMENT_MIMES = {
 }
 
 
-async def route_file(file: UploadFile, db: Session) -> uuid.UUID:
+async def route_file(
+    file: UploadFile,
+    db: Session,
+    background_tasks,
+    engine,
+) -> uuid.UUID:
     """
     Read the upload, detect its MIME type, and delegate to the right pipeline.
     Returns the asset UUID from the pipeline that handled it.
@@ -162,7 +167,7 @@ async def route_file(file: UploadFile, db: Session) -> uuid.UUID:
     mime_type: str = _detect_mime(data)
 
     if mime_type in _PHOTO_MIMES:
-        return await photo_pipeline.run(filename, data, mime_type, db)
+        return await photo_pipeline.run(filename, data, mime_type, db, background_tasks, engine)
 
     if mime_type.startswith(_VIDEO_MIMES_PREFIX):
         return await _video_pipeline(filename, data, mime_type, db)
@@ -171,10 +176,10 @@ async def route_file(file: UploadFile, db: Session) -> uuid.UUID:
         return await _audio_pipeline(filename, data, mime_type, db)
 
     if mime_type in _DOCUMENT_MIMES or mime_type.startswith("text/"):
-        return await document_pipeline.run(filename, data, mime_type, db)
+        return await document_pipeline.run(filename, data, mime_type, db, background_tasks, engine)
 
     # Fallback: treat as document (stores file, no text extraction)
-    return await document_pipeline.run(filename, data, mime_type, db)
+    return await document_pipeline.run(filename, data, mime_type, db, background_tasks, engine)
 
 
 # ---------------------------------------------------------------------------

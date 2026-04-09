@@ -17,7 +17,7 @@ sentry_sdk.init(
     traces_sample_rate=1.0,
 )
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -107,8 +107,12 @@ def health():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/v1/ingest")
-async def ingest(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    asset_id = await route_file(file, db)
+async def ingest(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db),
+):
+    asset_id = await route_file(file, db, background_tasks, engine)
     return {"asset_id": str(asset_id), "filename": file.filename}
 
 
