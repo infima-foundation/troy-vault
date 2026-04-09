@@ -1,13 +1,17 @@
 """
 Photo ingestion pipeline.
 
-Steps:
+Fast path (in-request):
   1. Dedup (SHA-256)
   2. Save to ./data/media/photos/YYYY/MM/<filename>
-  3. Extract EXIF metadata
-  4. Generate 400px-wide JPEG thumbnail
-  5. Write Asset + Tag rows to DB
-  6. Return asset_id (UUID)
+  3. Write minimal Asset row to DB
+  4. Return asset_id immediately
+
+Background (after response):
+  5. Extract EXIF metadata
+  6. Generate 400px-wide JPEG thumbnail
+  7. Update Asset row with EXIF + thumbnail_path
+  8. LLM tagging via Ollama
 """
 
 try:
@@ -23,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 import aiofiles
+from fastapi import BackgroundTasks
 from PIL import Image
 from sqlalchemy.orm import Session
 
@@ -35,24 +40,28 @@ MEDIA_ROOT = Path(os.getenv("MEDIA_PATH", "./data/media"))
 THUMB_WIDTH = 400
 
 
-async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.UUID:
+async def run(
+    filename: str,
+    data: bytes,
+    mime_type: str,
+    db: Session,
+    background_tasks: BackgroundTasks,
+    engine,
+) -> uuid.UUID:
     """
-    Full async photo pipeline. Returns the asset UUID.
-    Raises ValueError if the file is a duplicate.
+    Fast path: dedup, save file, write minimal DB row, return asset_id.
+    Schedules EXIF/thumbnail/tagging as a background task.
     """
     sha256 = sha256_of_bytes(data)
-
     existing = find_duplicate(sha256, db)
     if existing:
         return existing.id
 
-    # Determine storage path: photos/YYYY/MM/
     now = datetime.utcnow()
     dest_dir = MEDIA_ROOT / "photos" / str(now.year) / f"{now.month:02d}"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / filename
 
-    # Avoid collisions
     if dest_path.exists():
         stem = dest_path.stem
         suffix = dest_path.suffix
@@ -61,14 +70,6 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
     async with aiofiles.open(dest_path, "wb") as f:
         await f.write(data)
 
-    # EXIF
-    exif = extract_exif(data)
-    captured_at = exif.get("datetime_original")
-
-    # Thumbnail
-    thumb_path = _generate_thumbnail(data, dest_path)
-
-    # Persist
     asset_id = uuid.uuid4()
     asset = Asset(
         id=asset_id,
@@ -77,33 +78,52 @@ async def run(filename: str, data: bytes, mime_type: str, db: Session) -> uuid.U
         mime_type=mime_type,
         sha256_hash=sha256,
         file_path=str(dest_path),
-        thumbnail_path=str(thumb_path) if thumb_path else None,
         size_bytes=len(data),
-        captured_at=captured_at,
-        camera_make=exif.get("camera_make"),
-        camera_model=exif.get("camera_model"),
-        lat=exif.get("lat"),
-        lon=exif.get("lon"),
-        metadata_json={"exif_raw": exif.get("raw", {})},
     )
     db.add(asset)
-
-    # Tags from EXIF
-    _add_exif_tags(asset_id, exif, db)
-
     db.commit()
 
-    # LLM tagging — build context from filename + EXIF
-    exif_parts = [f"filename: {filename}"]
+    background_tasks.add_task(_post_process_photo, asset_id, data, dest_path, engine)
+    return asset_id
+
+
+async def _post_process_photo(
+    asset_id: uuid.UUID,
+    data: bytes,
+    dest_path: Path,
+    engine,
+) -> None:
+    """
+    Runs after the HTTP response is sent.
+    Creates its own DB session — the request session is already closed.
+    """
+    exif = extract_exif(data)
+    thumb_path = _generate_thumbnail(data, dest_path)
+
+    with Session(engine) as db:
+        asset = db.get(Asset, asset_id)
+        if asset:
+            asset.captured_at = exif.get("datetime_original")
+            asset.camera_make = exif.get("camera_make")
+            asset.camera_model = exif.get("camera_model")
+            asset.lat = exif.get("lat")
+            asset.lon = exif.get("lon")
+            asset.metadata_json = {"exif_raw": exif.get("raw", {})}
+            if thumb_path:
+                asset.thumbnail_path = str(thumb_path)
+            _add_exif_tags(asset_id, exif, db)
+            db.commit()
+
+    exif_parts = [f"filename: {dest_path.name}"]
     if exif.get("camera_make"):
         exif_parts.append(f"camera: {exif['camera_make']} {exif.get('camera_model', '')}")
     if exif.get("datetime_original"):
         exif_parts.append(f"date: {exif['datetime_original']}")
     if exif.get("lat") is not None:
         exif_parts.append(f"gps: {exif['lat']}, {exif['lon']}")
-    await tag_asset(asset_id, "photo", "\n".join(exif_parts), db)
 
-    return asset_id
+    with Session(engine) as db:
+        await tag_asset(asset_id, "photo", "\n".join(exif_parts), db)
 
 
 def _generate_thumbnail(data: bytes, source_path: Path) -> Path | None:
@@ -128,7 +148,6 @@ def _generate_thumbnail(data: bytes, source_path: Path) -> Path | None:
 
 def _add_exif_tags(asset_id: uuid.UUID, exif: dict, db: Session) -> None:
     tags_to_add = []
-
     if exif.get("camera_make"):
         tags_to_add.append(
             Tag(asset_id=asset_id, key="camera_make", value=exif["camera_make"],
@@ -149,5 +168,4 @@ def _add_exif_tags(asset_id: uuid.UUID, exif: dict, db: Session) -> None:
             Tag(asset_id=asset_id, key="gps_lon", value=str(exif["lon"]),
                 source=TagSource.exif, confidence=1.0)
         )
-
     db.add_all(tags_to_add)
