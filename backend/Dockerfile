@@ -1,26 +1,9 @@
 FROM python:3.11-slim
-
-# System deps: libmagic for python-magic, tesseract for pytesseract,
-# libgomp for ONNX Runtime, libGL for InsightFace
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmagic1 \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libgomp1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgl1 \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
-
+RUN apt-get update && apt-get install -y libmagic1 tesseract-ocr && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN mkdir -p /app/data/media
+EXPOSE 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
