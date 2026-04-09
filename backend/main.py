@@ -46,6 +46,9 @@ _MIGRATIONS = [
     "ALTER TABLE assets ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
     "ALTER TABLE conversations ADD COLUMN is_starred BOOLEAN DEFAULT FALSE",
     "ALTER TABLE assets ADD COLUMN folder_id VARCHAR(36)",
+    "ALTER TABLE assets ADD COLUMN user_id VARCHAR(256)",
+    "ALTER TABLE folders ADD COLUMN user_id VARCHAR(256)",
+    "ALTER TABLE conversations ADD COLUMN user_id VARCHAR(256)",
 ]
 
 
@@ -121,6 +124,7 @@ def list_assets(
     tags: str | None = Query(None),
     deleted: bool = Query(False, description="If true, return only soft-deleted assets"),
     folder_id: str | None = Query(None, description="Filter by folder; 'root' for top-level only"),
+    user_id: str | None = Query(None, description="Filter by owner user ID"),
     db: Session = Depends(get_db),
 ):
     stmt = select(Asset)
@@ -129,6 +133,9 @@ def list_assets(
         stmt = stmt.where(Asset.is_deleted == True)
     else:
         stmt = stmt.where(Asset.is_deleted == False)
+
+    if user_id:
+        stmt = stmt.where(Asset.user_id == user_id)
 
     if folder_id == "root":
         stmt = stmt.where(Asset.folder_id == None)
@@ -523,6 +530,7 @@ def create_folder(req: CreateFolderRequest, db: Session = Depends(get_db)):
 @app.get("/api/v1/folders")
 def list_folders(
     parent_id: str | None = Query(None, description="'root' for top-level, or a UUID"),
+    user_id: str | None = Query(None, description="Filter by owner user ID"),
     db: Session = Depends(get_db),
 ):
     stmt = select(Folder)
@@ -536,6 +544,8 @@ def list_folders(
             stmt = stmt.where(Folder.parent_id == pid)
         except ValueError:
             stmt = stmt.where(Folder.parent_id == None)
+    if user_id:
+        stmt = stmt.where(Folder.user_id == user_id)
     folders = db.scalars(stmt.order_by(Folder.name)).all()
     return [_folder_out(f) for f in folders]
 
