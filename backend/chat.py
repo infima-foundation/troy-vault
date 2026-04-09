@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -222,12 +222,18 @@ def get_db():
         yield session
 
 
+async def get_current_user(x_user_id: str = Header(None)):
+    """Extract user ID from X-User-ID request header. Returns None if not present."""
+    return x_user_id
+
+
 @router.post("/conversations")
 def create_conversation(
     req: CreateConversationRequest = CreateConversationRequest(),
     db: Session = Depends(get_db),
+    current_user: str | None = Depends(get_current_user),
 ):
-    conv = Conversation(title=req.title)
+    conv = Conversation(title=req.title, user_id=current_user)
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -235,15 +241,19 @@ def create_conversation(
 
 
 @router.get("/conversations")
-def list_conversations(db: Session = Depends(get_db)):
-    convs = db.scalars(
-        select(Conversation).order_by(Conversation.updated_at.desc())
-    ).all()
+def list_conversations(
+    db: Session = Depends(get_db),
+    current_user: str | None = Depends(get_current_user),
+):
+    stmt = select(Conversation)
+    if current_user is not None:
+        stmt = stmt.where(Conversation.user_id == current_user)
+    convs = db.scalars(stmt.order_by(Conversation.updated_at.desc())).all()
     return [_conv_out(c) for c in convs]
 
 
 @router.patch("/conversations/{conv_id}")
-def patch_conversation(conv_id: str, req: PatchConversationRequest, db: Session = Depends(get_db)):
+def patch_conversation(conv_id: str, req: PatchConversationRequest, db: Session = Depends(get_db), current_user: str | None = Depends(get_current_user)):
     try:
         cid = uuid.UUID(conv_id)
     except ValueError:
@@ -263,7 +273,7 @@ def patch_conversation(conv_id: str, req: PatchConversationRequest, db: Session 
 
 
 @router.patch("/conversations/{conv_id}/star")
-def star_conversation(conv_id: str, db: Session = Depends(get_db)):
+def star_conversation(conv_id: str, db: Session = Depends(get_db), current_user: str | None = Depends(get_current_user)):
     try:
         cid = uuid.UUID(conv_id)
     except ValueError:
@@ -278,7 +288,7 @@ def star_conversation(conv_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/conversations/{conv_id}", status_code=204)
-def delete_conversation(conv_id: str, db: Session = Depends(get_db)):
+def delete_conversation(conv_id: str, db: Session = Depends(get_db), current_user: str | None = Depends(get_current_user)):
     try:
         cid = uuid.UUID(conv_id)
     except ValueError:
@@ -291,7 +301,7 @@ def delete_conversation(conv_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/conversations/{conv_id}/messages")
-def get_messages(conv_id: str, db: Session = Depends(get_db)):
+def get_messages(conv_id: str, db: Session = Depends(get_db), current_user: str | None = Depends(get_current_user)):
     try:
         cid = uuid.UUID(conv_id)
     except ValueError:
@@ -303,7 +313,7 @@ def get_messages(conv_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/conversations/{conv_id}/messages")
-async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depends(get_db)):
+async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depends(get_db), current_user: str | None = Depends(get_current_user)):
     try:
         cid = uuid.UUID(conv_id)
     except ValueError:
