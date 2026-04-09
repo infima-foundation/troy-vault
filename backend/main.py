@@ -36,6 +36,8 @@ _engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 else:
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
     _engine_kwargs["pool_pre_ping"] = True
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
@@ -233,7 +235,11 @@ def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
                 ".gif": "image/gif", ".heic": "image/heic",
                 ".heif": "image/heif",
             }.get(suffix, "application/octet-stream")
-            return FileResponse(candidate, media_type=media_type)
+            return FileResponse(
+                candidate,
+                media_type=media_type,
+                headers={"Cache-Control": "public, max-age=31536000"},
+            )
 
     raise HTTPException(status_code=404, detail="No image file available for this asset")
 
