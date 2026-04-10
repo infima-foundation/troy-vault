@@ -20,7 +20,6 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-import aiofiles
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -41,7 +40,6 @@ from models import Asset, FileType
 from ingestion.dedup import sha256_of_bytes, find_duplicate
 from ingestion.tagger import tag_asset
 
-MEDIA_ROOT = Path(os.getenv("MEDIA_PATH", "./data/media"))
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma_data")
 CHUNK_SIZE = 512
 CHUNK_STRIDE = 64
@@ -88,18 +86,11 @@ async def run(
     if existing:
         return existing.id
 
+    from storage import save_file as _save_file
     now = datetime.utcnow()
-    dest_dir = MEDIA_ROOT / "documents" / str(now.year) / f"{now.month:02d}"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / filename
-
-    if dest_path.exists():
-        stem = dest_path.stem
-        suffix = dest_path.suffix
-        dest_path = dest_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
-
-    async with aiofiles.open(dest_path, "wb") as f:
-        await f.write(data)
+    safe_filename = f"{Path(filename).stem}_{uuid.uuid4().hex[:8]}{Path(filename).suffix}"
+    object_path = f"documents/{now.year}/{now.month:02d}/{safe_filename}"
+    stored_path = await _save_file(data, object_path, mime_type)
 
     asset_id = uuid.uuid4()
     asset = Asset(
@@ -108,14 +99,14 @@ async def run(
         file_type=FileType.document,
         mime_type=mime_type,
         sha256_hash=sha256,
-        file_path=str(dest_path),
+        file_path=stored_path,
         size_bytes=len(data),
     )
     db.add(asset)
     db.commit()
 
     background_tasks.add_task(
-        _post_process_document, asset_id, data, filename, mime_type, str(dest_path), engine
+        _post_process_document, asset_id, data, filename, mime_type, stored_path, engine
     )
     return asset_id
 
