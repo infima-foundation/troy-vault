@@ -27,7 +27,7 @@ sentry_sdk.init(
 
 from fastapi import FastAPI, Depends, HTTPException, Header, Query, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from pydantic import BaseModel
@@ -276,12 +276,20 @@ def search_assets(
 
 @app.get("/api/v1/assets/{asset_id}/thumbnail")
 def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
+    from storage import get_public_url as _get_public_url
     asset = db.get(Asset, _parse_uuid(asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
     for candidate in [asset.thumbnail_path, asset.file_path]:
-        if candidate and Path(candidate).exists():
+        if not candidate:
+            continue
+        if candidate.startswith("supabase://"):
+            url = _get_public_url(candidate)
+            if url:
+                return RedirectResponse(url, status_code=302)
+            continue
+        if Path(candidate).exists():
             suffix = Path(candidate).suffix.lower()
             media_type = {
                 ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -301,16 +309,22 @@ def get_thumbnail(asset_id: str, db: Session = Depends(get_db)):
 @app.get("/api/v1/assets/{asset_id}/file")
 def get_file(asset_id: str, db: Session = Depends(get_db)):
     """Serve the original file for download."""
+    from storage import get_public_url as _get_public_url
     asset = db.get(Asset, _parse_uuid(asset_id))
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    if asset.file_path and Path(asset.file_path).exists():
-        return FileResponse(
-            asset.file_path,
-            media_type=asset.mime_type or "application/octet-stream",
-            filename=asset.filename,
-        )
+    if asset.file_path:
+        if asset.file_path.startswith("supabase://"):
+            url = _get_public_url(asset.file_path)
+            if url:
+                return RedirectResponse(url, status_code=302)
+        elif Path(asset.file_path).exists():
+            return FileResponse(
+                asset.file_path,
+                media_type=asset.mime_type or "application/octet-stream",
+                filename=asset.filename,
+            )
     raise HTTPException(status_code=404, detail="File not found on disk")
 
 
