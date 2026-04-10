@@ -26,7 +26,6 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-import aiofiles
 from fastapi import BackgroundTasks
 from PIL import Image
 from sqlalchemy.orm import Session
@@ -36,7 +35,6 @@ from ingestion.dedup import sha256_of_bytes, find_duplicate
 from ingestion.metadata_extractor import extract_exif
 from ingestion.tagger import tag_asset
 
-MEDIA_ROOT = Path(os.getenv("MEDIA_PATH", "./data/media"))
 THUMB_WIDTH = 400
 
 
@@ -57,18 +55,11 @@ async def run(
     if existing:
         return existing.id
 
+    from storage import save_file as _save_file
     now = datetime.utcnow()
-    dest_dir = MEDIA_ROOT / "photos" / str(now.year) / f"{now.month:02d}"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / filename
-
-    if dest_path.exists():
-        stem = dest_path.stem
-        suffix = dest_path.suffix
-        dest_path = dest_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
-
-    async with aiofiles.open(dest_path, "wb") as f:
-        await f.write(data)
+    safe_filename = f"{Path(filename).stem}_{uuid.uuid4().hex[:8]}{Path(filename).suffix}"
+    object_path = f"photos/{now.year}/{now.month:02d}/{safe_filename}"
+    stored_path = await _save_file(data, object_path, mime_type)
 
     asset_id = uuid.uuid4()
     asset = Asset(
@@ -77,20 +68,22 @@ async def run(
         file_type=FileType.photo,
         mime_type=mime_type,
         sha256_hash=sha256,
-        file_path=str(dest_path),
+        file_path=stored_path,
         size_bytes=len(data),
     )
     db.add(asset)
     db.commit()
 
-    background_tasks.add_task(_post_process_photo, asset_id, data, dest_path, engine)
+    background_tasks.add_task(_post_process_photo, asset_id, data, safe_filename, now.year, now.month, engine)
     return asset_id
 
 
 async def _post_process_photo(
     asset_id: uuid.UUID,
     data: bytes,
-    dest_path: Path,
+    safe_filename: str,
+    year: int,
+    month: int,
     engine,
 ) -> None:
     """
@@ -98,7 +91,9 @@ async def _post_process_photo(
     Creates its own DB session — the request session is already closed.
     """
     exif = extract_exif(data)
-    thumb_path = _generate_thumbnail(data, dest_path)
+    stem = Path(safe_filename).stem
+    thumb_object_path = f"photos/{year}/{month:02d}/thumbs/{stem}_thumb.jpg"
+    thumb_path = await _generate_thumbnail(data, thumb_object_path)
 
     with Session(engine) as db:
         asset = db.get(Asset, asset_id)
@@ -110,11 +105,11 @@ async def _post_process_photo(
             asset.lon = exif.get("lon")
             asset.metadata_json = {"exif_raw": exif.get("raw", {})}
             if thumb_path:
-                asset.thumbnail_path = str(thumb_path)
+                asset.thumbnail_path = thumb_path
             _add_exif_tags(asset_id, exif, db)
             db.commit()
 
-    exif_parts = [f"filename: {dest_path.name}"]
+    exif_parts = [f"filename: {safe_filename}"]
     if exif.get("camera_make"):
         exif_parts.append(f"camera: {exif['camera_make']} {exif.get('camera_model', '')}")
     if exif.get("datetime_original"):
@@ -126,9 +121,10 @@ async def _post_process_photo(
         await tag_asset(asset_id, "photo", "\n".join(exif_parts), db)
 
 
-def _generate_thumbnail(data: bytes, source_path: Path) -> Path | None:
+async def _generate_thumbnail(data: bytes, thumb_object_path: str) -> str | None:
     try:
         from PIL import ImageOps
+        from storage import save_file as _save_file
         img = Image.open(io.BytesIO(data))
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
@@ -137,11 +133,11 @@ def _generate_thumbnail(data: bytes, source_path: Path) -> Path | None:
         new_height = int(float(img.height) * w_percent)
         img = img.resize((THUMB_WIDTH, new_height), Image.LANCZOS)
 
-        thumb_dir = source_path.parent / "thumbs"
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-        thumb_path = thumb_dir / f"{source_path.stem}_thumb.jpg"
-        img.save(thumb_path, "JPEG", quality=85)
-        return thumb_path
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=85)
+        thumb_bytes = buf.getvalue()
+
+        return await _save_file(thumb_bytes, thumb_object_path, "image/jpeg")
     except Exception:
         return None
 
