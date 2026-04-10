@@ -5,6 +5,7 @@ Conversations + messages backed by SQLite.
 Each message send queries ChromaDB for RAG context, then calls Ollama /api/chat.
 """
 
+import asyncio
 import json
 import os
 import uuid
@@ -24,7 +25,81 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./data/chroma_data")
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+USE_GEMINI = bool(GEMINI_API_KEY)
+
+if USE_GEMINI:
+    import google.generativeai as genai
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=(
+            "You are TROY, a personal AI assistant. You have access to the user's private vault "
+            "of files. Answer questions about their documents and media concisely and helpfully."
+        ),
+    )
+else:
+    gemini_model = None
+
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+
+def chat_with_gemini(messages: list) -> str:
+    """Non-streaming Gemini call. Returns the full response text."""
+    history = [
+        {
+            "role": "user" if m["role"] == "user" else "model",
+            "parts": [m["content"]],
+        }
+        for m in messages[:-1]
+        if m["role"] != "system"
+    ]
+    system_msgs = [m for m in messages if m["role"] == "system"]
+    if system_msgs:
+        history = [
+            {"role": "user", "parts": [system_msgs[0]["content"]]},
+            {"role": "model", "parts": ["Understood."]},
+        ] + history
+    chat = gemini_model.start_chat(history=history)
+    response = chat.send_message(messages[-1]["content"])
+    return response.text
+
+
+async def _stream_gemini_tokens(messages: list) -> list[str]:
+    """
+    Run Gemini streaming in a thread (SDK is synchronous) and return all tokens.
+    The caller iterates the list and yields each token as an SSE event.
+    """
+    def _sync() -> list[str]:
+        history = [
+            {
+                "role": "user" if m["role"] == "user" else "model",
+                "parts": [m["content"]],
+            }
+            for m in messages
+            if m["role"] != "system"
+        ]
+        system_msgs = [m for m in messages if m["role"] == "system"]
+        if system_msgs:
+            history = [
+                {"role": "user", "parts": [system_msgs[0]["content"]]},
+                {"role": "model", "parts": ["Understood."]},
+            ] + history
+
+        if not history:
+            return []
+
+        last = history[-1]
+        past = history[:-1]
+        chat = gemini_model.start_chat(history=past)
+        resp = chat.send_message(last["parts"][0], stream=True)
+        tokens = []
+        for chunk in resp:
+            if hasattr(chunk, "text") and chunk.text:
+                tokens.append(chunk.text)
+        return tokens
+
+    return await asyncio.to_thread(_sync)
 
 
 # ─── Pydantic schemas ─────────────────────────────────────────────────────────
@@ -125,11 +200,21 @@ async def _rag_context(query: str, n_results: int = 5) -> str:
 
 
 async def _generate_title(first_message: str) -> str:
-    """Call Ollama to generate a short 4-6 word title for the conversation."""
+    """Generate a short 4-6 word title using Gemini (preferred) or Ollama."""
     prompt = (
         f"Generate a short 4-6 word title for a conversation that starts with: "
         f"'{first_message[:200]}'. Return only the title, no quotes."
     )
+
+    if USE_GEMINI:
+        def _sync():
+            resp = gemini_model.generate_content(prompt)
+            return resp.text.strip().strip('"\'')[:80]
+        try:
+            return await asyncio.to_thread(_sync)
+        except Exception:
+            return first_message[:60]
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
@@ -143,13 +228,11 @@ async def _generate_title(first_message: str) -> str:
             resp.raise_for_status()
             data = resp.json()
             title = data.get("message", {}).get("content", "").strip()
-            # Clean up: remove surrounding quotes if present
             title = title.strip('"\'')
             if title:
                 return title[:80]
     except Exception:
         pass
-    # Fallback: truncate first message
     return first_message[:60]
 
 
@@ -360,33 +443,46 @@ async def send_message(conv_id: str, req: SendMessageRequest, db: Session = Depe
             yield f"data: {json.dumps({'title': generated_title})}\n\n"
 
         full_content = ""
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{OLLAMA_HOST}/api/chat",
-                    json={"model": OLLAMA_MODEL, "messages": ollama_messages, "stream": True},
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        token = data.get("message", {}).get("content", "")
-                        if token:
-                            full_content += token
-                            yield f"data: {json.dumps({'token': token})}\n\n"
-                        if data.get("done"):
-                            break
-        except Exception:
-            full_content = (
-                "I'm having trouble reaching the language model right now. "
-                "Please make sure Ollama is running with `ollama serve`."
-            )
-            yield f"data: {json.dumps({'token': full_content})}\n\n"
+        if USE_GEMINI:
+            try:
+                tokens = await _stream_gemini_tokens(ollama_messages)
+                for token in tokens:
+                    full_content += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            except Exception:
+                full_content = (
+                    "I'm having trouble reaching Gemini right now. "
+                    "Check that GEMINI_API_KEY is valid."
+                )
+                yield f"data: {json.dumps({'token': full_content})}\n\n"
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{OLLAMA_HOST}/api/chat",
+                        json={"model": OLLAMA_MODEL, "messages": ollama_messages, "stream": True},
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            token = data.get("message", {}).get("content", "")
+                            if token:
+                                full_content += token
+                                yield f"data: {json.dumps({'token': token})}\n\n"
+                            if data.get("done"):
+                                break
+            except Exception:
+                full_content = (
+                    "I'm having trouble reaching the language model right now. "
+                    "Please make sure Ollama is running with `ollama serve`."
+                )
+                yield f"data: {json.dumps({'token': full_content})}\n\n"
 
         # Persist assistant message
         from main import engine as _engine
